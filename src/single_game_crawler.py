@@ -575,7 +575,8 @@ async def main():
         #(1091500, "Cyberpunk 2077"),
         #(570, "Dota 2"),
         #(730, "Counter-Strike 2")
-        (2456740,'a')
+        (1284790,'unable')
+
     ]
     
     all_games_info = []

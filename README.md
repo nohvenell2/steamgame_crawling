@@ -11,12 +11,27 @@ Steam 게임의 태그 정보를 크롤링하는 Python 프로그램입니다.
 
 ## 설치 방법
 
+### Poetry 사용 (권장)
+
 ```bash
 # Poetry 설치 (아직 설치하지 않은 경우)
 curl -sSL https://install.python-poetry.org | python3 -
 
 # 의존성 설치
 poetry install
+```
+
+### pip 사용
+
+```bash
+# 가상환경 생성 (선택사항)
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# 또는
+.\venv\Scripts\activate  # Windows
+
+# 의존성 설치
+pip install -r requirements.txt
 ```
 
 ## 사용 방법
@@ -26,10 +41,11 @@ poetry install
 의미없는 게임들을 제외하고 리뷰 수가 많은 인기 게임들만 선별합니다:
 
 ```bash
-# 가상환경 활성화
+# Poetry 사용 시
 poetry shell
+python run_game_filter.py
 
-# 인기 게임 필터링 실행
+# pip 사용 시
 python run_game_filter.py
 ```
 
@@ -47,10 +63,11 @@ python run_game_filter.py
 필터링된 게임 목록으로 태그 정보를 수집합니다:
 
 ```bash
-# 가상환경 활성화
+# Poetry 사용 시
 poetry shell
+python src/crawler.py
 
-# 프로그램 실행
+# pip 사용 시
 python src/crawler.py
 ```
 
