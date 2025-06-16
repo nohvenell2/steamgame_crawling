@@ -1,20 +1,17 @@
-[project]
+[tool.poetry]
 name = "steamgame-crawling"
 version = "0.1.0"
 description = "Steam game tag crawler"
-authors = [
-    {name = "nohvenell2",email = "nohvenell2@gmail.com"}
-]
+authors = ["nohvenell2 <nohvenell2@gmail.com>"]
 readme = "README.md"
-requires-python = ">=3.12"
-dependencies = [
-    "requests>=2.31.0",
-    "beautifulsoup4>=4.12.0",
-    "aiohttp>=3.9.0",
-    "pandas>=2.1.0",
-    "tqdm>=4.66.0"
-]
 
+[tool.poetry.dependencies]
+python = ">=3.12"
+requests = ">=2.31.0"
+beautifulsoup4 = ">=4.12.0"
+aiohttp = ">=3.9.0"
+pandas = ">=2.1.0"
+tqdm = ">=4.66.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
