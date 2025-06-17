@@ -70,7 +70,7 @@ class ComprehensiveGameCrawler:
         if 'title' not in info:
             info['title'] = "Unknown"
         
-        # 게임 설명
+        # 게임 짧은 설명
         desc_selectors = [
             '.game_description_snippet',
             '.game_area_description .game_description_snippet'
@@ -86,6 +86,83 @@ class ComprehensiveGameCrawler:
             info['description'] = ""
         
         return info
+
+    def extract_detailed_description(self, soup: BeautifulSoup) -> str:
+        """게임의 상세 설명을 추출합니다."""
+        detailed_desc = ""
+        
+        try:
+            # 방법 1: #game_area_description에서 추출
+            game_area_desc = soup.select_one('#game_area_description')
+            if game_area_desc:
+                # "About This Game" 제목 제거하고 내용만 추출
+                desc_text = game_area_desc.get_text(strip=True)
+                # "About This Game" 문구 제거
+                if desc_text.startswith('About This Game'):
+                    desc_text = desc_text[len('About This Game'):].strip()
+                if desc_text:
+                    detailed_desc = desc_text
+            
+            # 방법 2: .game_area_description 클래스로 찾기
+            if not detailed_desc:
+                game_area_desc = soup.select_one('.game_area_description')
+                if game_area_desc:
+                    # 짧은 설명 요소는 제외하고 나머지 텍스트 추출
+                    desc_copy = game_area_desc.__copy__()
+                    # 짧은 설명 부분 제거
+                    short_desc_elem = desc_copy.select_one('.game_description_snippet')
+                    if short_desc_elem:
+                        short_desc_elem.decompose()
+                    
+                    desc_text = desc_copy.get_text(strip=True)
+                    if desc_text.startswith('About This Game'):
+                        desc_text = desc_text[len('About This Game'):].strip()
+                    if desc_text and len(desc_text) > 200:  # 충분히 긴 텍스트만
+                        detailed_desc = desc_text
+            
+            # 방법 3: "About This Game" 제목 다음 컨텐츠 찾기
+            if not detailed_desc:
+                about_headers = soup.find_all(string=lambda text: text is not None and 'About This Game' in text)
+                for header in about_headers:
+                    parent = header.parent
+                    if parent:
+                        # 다음 형제 요소들에서 상세 설명 찾기
+                        next_elem = parent.find_next_sibling()
+                        while next_elem:
+                            text = next_elem.get_text(strip=True)
+                            if text and len(text) > 200:
+                                detailed_desc = text
+                                break
+                            next_elem = next_elem.find_next_sibling()
+                        
+                        if detailed_desc:
+                            break
+            
+            # 방법 4: 특정 컨테이너에서 가장 긴 텍스트 찾기
+            if not detailed_desc:
+                containers = soup.select('.tab_content, .game_page_autocollapse_ctn, .game_highlights')
+                for container in containers:
+                    text = container.get_text(strip=True)
+                    if len(text) > 500 and len(text) > len(detailed_desc):
+                        # 짧은 설명과 다른 경우만
+                        short_desc = soup.select_one('.game_description_snippet')
+                        if short_desc:
+                            short_text = short_desc.get_text(strip=True)
+                            if text != short_text and short_text not in text[:200]:
+                                detailed_desc = text
+            
+            # 텍스트 정리
+            if detailed_desc:
+                # 불필요한 공백과 줄바꿈 정리
+                detailed_desc = re.sub(r'\s+', ' ', detailed_desc).strip()
+                # 너무 긴 경우 제한 (5000자)
+                if len(detailed_desc) > 5000:
+                    detailed_desc = detailed_desc[:5000] + "..."
+                    
+        except Exception as e:
+            print(f"상세 설명 추출 중 오류: {e}")
+        
+        return detailed_desc
 
     def extract_tags(self, soup: BeautifulSoup) -> List[str]:
         """게임 태그를 추출합니다."""
@@ -106,6 +183,93 @@ class ComprehensiveGameCrawler:
                 break
         
         return tags
+
+    def extract_genres(self, soup: BeautifulSoup) -> List[str]:
+        """게임 장르를 추출합니다."""
+        genres = []
+        
+        try:
+            # 방법 1: 게임 상세 정보에서 "Genre:" 라벨 다음의 링크들 찾기
+            genre_section = soup.select_one('#genresAndManufacturer')
+            if genre_section:
+                # "Genre:" 텍스트가 있는 부분 찾기
+                genre_text = genre_section.get_text()
+                if 'Genre:' in genre_text:
+                    genre_links = genre_section.select('a[href*="/genre/"]')
+                    for link in genre_links:
+                        genre_name = link.get_text(strip=True)
+                        if genre_name and genre_name not in genres:
+                            genres.append(genre_name)
+            
+            # 방법 2: 더 일반적인 방법으로 장르 링크 찾기
+            if not genres:
+                genre_links = soup.select('a[href*="/genre/"]')
+                for link in genre_links:
+                    # URL에서 장르명 추출
+                    href = link.get('href')
+                    if href and '/genre/' in href:
+                        genre_name = link.get_text(strip=True)
+                        # 개발사/퍼블리셔가 아닌 실제 장르인지 확인
+                        if genre_name and len(genre_name) < 50 and genre_name not in genres:
+                            # 일반적인 장르 키워드 필터링
+                            common_genres = [
+                                'Action', 'Adventure', 'RPG', 'Strategy', 'Simulation', 
+                                'Sports', 'Racing', 'Puzzle', 'Platformer', 'Shooter',
+                                'Fighting', 'Horror', 'Survival', 'Arcade', 'Casual',
+                                'Indie', 'MMO', 'Multiplayer', 'Co-op', 'VR', 'Free to Play',
+                                'Early Access'
+                            ]
+                            if any(common in genre_name for common in common_genres):
+                                genres.append(genre_name)
+                            elif genre_name in common_genres:
+                                genres.append(genre_name)
+            
+            # 방법 3: details_block에서 "Genre:" 패턴으로 찾기
+            if not genres:
+                details_blocks = soup.select('.details_block')
+                for block in details_blocks:
+                    block_text = block.get_text()
+                    if 'Genre:' in block_text:
+                        # Genre: 다음의 링크들 찾기
+                        genre_pattern = re.search(r'Genre:\s*(.+?)(?:\n|$)', block_text)
+                        if genre_pattern:
+                            genre_text = genre_pattern.group(1).strip()
+                            # 쉼표로 구분된 장르들 분리
+                            for genre in genre_text.split(','):
+                                genre = genre.strip()
+                                if genre and genre not in genres:
+                                    genres.append(genre)
+                        
+                        # 블록 내의 장르 링크들도 찾기
+                        genre_links = block.select('a[href*="/genre/"]')
+                        for link in genre_links:
+                            genre_name = link.get_text(strip=True)
+                            if genre_name and genre_name not in genres:
+                                genres.append(genre_name)
+                        break
+            
+            # 방법 4: 전체 텍스트에서 "Genre:" 패턴 찾기
+            if not genres:
+                all_text = soup.get_text()
+                genre_matches = re.findall(r'Genre[s]?[:\s]+([^\n\r]+)', all_text, re.IGNORECASE)
+                for match in genre_matches:
+                    match = match.strip()
+                    # 쉼표나 기타 구분자로 분리
+                    for genre in re.split(r'[,;/]', match):
+                        genre = genre.strip()
+                        if genre and len(genre) < 50 and genre not in genres:
+                            genres.append(genre)
+            
+        except Exception as e:
+            print(f"장르 정보 추출 중 오류: {e}")
+        
+        # 중복 제거 및 정리
+        unique_genres = []
+        for genre in genres:
+            if genre and genre not in unique_genres:
+                unique_genres.append(genre)
+        
+        return unique_genres
 
     def extract_price_info(self, soup: BeautifulSoup) -> Dict[str, Any]:
         """가격 정보를 추출합니다."""
@@ -405,7 +569,9 @@ class ComprehensiveGameCrawler:
                                 'app_id': app_id,
                                 'crawled_at': datetime.now().isoformat(),
                                 **self.extract_basic_info(soup, app_id),
+                                'detailed_description': self.extract_detailed_description(soup),
                                 'tags': self.extract_tags(soup),
+                                'genres': self.extract_genres(soup),
                                 'price_info': self.extract_price_info(soup),
                                 'developer_publisher': self.extract_developer_publisher(soup),
                                 'release_date': self.extract_release_date(soup),
@@ -413,7 +579,9 @@ class ComprehensiveGameCrawler:
                                 'header_images': self.extract_header_images(soup, app_id),
                                 'system_requirements': self.extract_system_requirements(soup)
                             }
-                            
+                            if not game_info.get('title') or game_info.get('title') == 'Unknown' :
+                                print(f"  ❌ 게임 ID {app_id}: 게임 정보 추출 불가능")
+                                return {}
                             return game_info
                         
                         # 요청 제한 관련 상태 코드
@@ -436,7 +604,7 @@ class ComprehensiveGameCrawler:
             except Exception as e:
                 if attempt < max_retries and "HTTP" in str(e) and any(code in str(e) for code in ["429", "503", "502", "504"]):
                     # 재시도 가능한 네트워크 오류
-                    delay = 10 * (2 ** attempt)
+                    delay = 2 * (2 ** attempt)
                     print(f"  ⚠️  게임 ID {app_id}: 네트워크 오류 - {attempt + 1}회 실패, {delay}초 후 재시도... ({str(e)})")
                     await asyncio.sleep(delay)
                     continue
@@ -539,10 +707,10 @@ def save_multiple_games_csv(games_info: List[Dict[str, Any]], filename: Optional
     
     # CSV 헤더 정의
     headers = [
-        'app_id', 'title', 'description', 'current_price', 'original_price', 
+        'app_id', 'title', 'description', 'detailed_description', 'current_price', 'original_price', 
         'discount_percent', 'is_free', 'developer', 'publisher', 'release_date',
         'all_reviews', 'total_review_count', 'total_positive_percent',
-        'tags', 'header_image', 'crawled_at'
+        'tags', 'genres', 'header_image', 'crawled_at'
     ]
     
     # CSV로 저장
@@ -556,6 +724,7 @@ def save_multiple_games_csv(games_info: List[Dict[str, Any]], filename: Optional
                 'app_id': game_info.get('app_id', ''),
                 'title': game_info.get('title', ''),
                 'description': game_info.get('description', '')[:200] + '...' if len(game_info.get('description', '')) > 200 else game_info.get('description', ''),
+                'detailed_description': game_info.get('detailed_description', '')[:500] + '...' if len(game_info.get('detailed_description', '')) > 500 else game_info.get('detailed_description', ''),
                 'current_price': game_info.get('price_info', {}).get('current_price', ''),
                 'original_price': game_info.get('price_info', {}).get('original_price', ''),
                 'discount_percent': game_info.get('price_info', {}).get('discount_percent', ''),
@@ -567,6 +736,7 @@ def save_multiple_games_csv(games_info: List[Dict[str, Any]], filename: Optional
                 'total_review_count': game_info.get('review_info', {}).get('total_review_count', ''),
                 'total_positive_percent': game_info.get('review_info', {}).get('total_positive_percent', ''),
                 'tags': ', '.join(game_info.get('tags', [])),
+                'genres': ', '.join(game_info.get('genres', [])),
                 'header_image': game_info.get('header_images', [''])[0] if game_info.get('header_images') else '',
                 'crawled_at': game_info.get('crawled_at', '')
             }
@@ -589,12 +759,21 @@ def print_game_info(game_info: Dict[str, Any]):
         return
     
     print(f"\n=== {game_info.get('title', 'Unknown')} (ID: {game_info.get('app_id')}) ===")
-    print(f"📝 설명: {game_info.get('description', 'N/A')[:100]}...")
+    print(f"📝 짧은 설명: {game_info.get('description', 'N/A')[:100]}...")
+    
+    detailed_desc = game_info.get('detailed_description', '')
+    if detailed_desc:
+        print(f"📄 상세 설명: {detailed_desc[:200]}...")
+        print(f"   (총 {len(detailed_desc)} 문자)")
+    else:
+        print(f"📄 상세 설명: N/A")
+    
     print(f"💰 가격: {game_info.get('price_info', {}).get('current_price', 'N/A')}")
     print(f"👨‍💻 개발사: {game_info.get('developer_publisher', {}).get('developer', 'N/A')}")
     print(f"🏢 퍼블리셔: {game_info.get('developer_publisher', {}).get('publisher', 'N/A')}")
     print(f"📅 출시일: {game_info.get('release_date', 'N/A')}")
     print(f"⭐ 전체 리뷰: {game_info.get('review_info', {}).get('all_reviews', 'N/A')}")
+    print(f"🎮 장르: {', '.join(game_info.get('genres', [])[:5]) or 'N/A'}")
     print(f"🏷️ 태그: {', '.join(game_info.get('tags', [])[:5])}...")
     print(f"🖼️ 헤더 이미지: {game_info.get('header_images', ['N/A'])[0]}")
 
@@ -604,10 +783,10 @@ async def main(save=False):
     test_games = [
         (1091500, "Cyberpunk 2077"),
         (2456740, "inZOI"),
-        #(570, "Dota 2"),
-        #(730, "Counter-Strike 2")
-        (1284790,'unable')
-
+        (570, "Dota 2"),
+        (730, "Counter-Strike 2"),
+        (203770,"CK2"),
+        (1771300,"KCD2")
     ]
     
     all_games_info = []
@@ -626,13 +805,12 @@ async def main(save=False):
             all_games_info.append(game_info)
     
     # 모든 게임 정보를 CSV로 저장
-    if all_games_info and save:
+    """ if all_games_info and save:
         save_multiple_games_csv(all_games_info, "test_games.csv")
         
         print(f"\n📊 총 {len(all_games_info)}개 게임 정보 수집 완료!")
-        print("💾 개별 JSON 파일과 통합 CSV 파일이 data/game_info/ 폴더에 저장되었습니다.")
+        print("💾 개별 JSON 파일과 통합 CSV 파일이 data/game_info/ 폴더에 저장되었습니다.") """
 
 
 if __name__ == "__main__":
-    info = get_steam_game_info_sync(1091500)
-    print_game_info(info)
+    asyncio.run(main(save=True))
