@@ -376,59 +376,88 @@ class ComprehensiveGameCrawler:
         
         return sys_req
 
-    async def get_comprehensive_game_info(self, app_id: int) -> Dict[str, Any]:
+    async def get_comprehensive_game_info(self, app_id: int, max_retries: int = 7) -> Dict[str, Any]:
         """게임 ID를 입력받아 모든 정보를 종합적으로 추출합니다."""
         url = f"{self.base_url}{app_id}"
         print(f"종합 정보 추출 중: {url}")
         
-        try:
-            jar = aiohttp.CookieJar(unsafe=True)
-            async with aiohttp.ClientSession(cookie_jar=jar) as session:
-                cookies = self.get_age_verification_cookies()
-                
-                async with session.get(url, headers=self.headers, cookies=cookies) as response:
-                    if response.status == 200:
-                        html = await response.text()
+        for attempt in range(max_retries + 1):
+            try:
+                jar = aiohttp.CookieJar(unsafe=True)
+                async with aiohttp.ClientSession(cookie_jar=jar) as session:
+                    cookies = self.get_age_verification_cookies()
+                    
+                    async with session.get(url, headers=self.headers, cookies=cookies) as response:
+                        # 성공적인 응답
+                        if response.status == 200:
+                            html = await response.text()
+                            
+                            # 나이 인증 페이지로 리다이렉트된 경우 처리
+                            if 'agecheck' in response.url.path or 'agegate' in html.lower():
+                                html = await self.handle_age_check(session, str(response.url))
+                                if not html:
+                                    return {}
+                            
+                            soup = BeautifulSoup(html, 'html.parser')
+                            
+                            # 모든 정보 추출
+                            game_info = {
+                                'app_id': app_id,
+                                'crawled_at': datetime.now().isoformat(),
+                                **self.extract_basic_info(soup, app_id),
+                                'tags': self.extract_tags(soup),
+                                'price_info': self.extract_price_info(soup),
+                                'developer_publisher': self.extract_developer_publisher(soup),
+                                'release_date': self.extract_release_date(soup),
+                                'review_info': self.extract_review_info(soup),
+                                'header_images': self.extract_header_images(soup, app_id),
+                                'system_requirements': self.extract_system_requirements(soup)
+                            }
+                            
+                            return game_info
                         
-                        # 나이 인증 페이지로 리다이렉트된 경우 처리
-                        if 'agecheck' in response.url.path or 'agegate' in html.lower():
-                            html = await self.handle_age_check(session, str(response.url))
-                            if not html:
-                                return {}
+                        # 요청 제한 관련 상태 코드
+                        elif response.status in [429, 503, 502, 504]:
+                            if attempt < max_retries:
+                                # 지수적으로 증가하는 딜레이 (10초, 20초, 40초, 80초, 160초, 320초, 640초)
+                                delay = 2 * (2 ** attempt)
+                                print(f"  ⚠️  게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
+                                await asyncio.sleep(delay)
+                                continue
+                            else:
+                                print(f"  ❌ 게임 ID {app_id}: HTTP {response.status} - 최대 재시도 횟수 초과")
+                                raise Exception(f"HTTP {response.status}: 최대 재시도 횟수({max_retries})를 초과했습니다. 요청이 지속적으로 거부되고 있습니다.")
                         
-                        soup = BeautifulSoup(html, 'html.parser')
-                        
-                        # 모든 정보 추출
-                        game_info = {
-                            'app_id': app_id,
-                            'crawled_at': datetime.now().isoformat(),
-                            **self.extract_basic_info(soup, app_id),
-                            'tags': self.extract_tags(soup),
-                            'price_info': self.extract_price_info(soup),
-                            'developer_publisher': self.extract_developer_publisher(soup),
-                            'release_date': self.extract_release_date(soup),
-                            'review_info': self.extract_review_info(soup),
-                            'header_images': self.extract_header_images(soup, app_id),
-                            'system_requirements': self.extract_system_requirements(soup)
-                        }
-                        
-                        return game_info
-                    else:
-                        print(f"HTTP 오류: {response.status}")
-                        return {}
-                        
-        except Exception as e:
-            print(f"종합 정보 추출 중 오류: {str(e)}")
-            return {}
+                        # 기타 HTTP 에러
+                        else:
+                            print(f"  ❌ 게임 ID {app_id}: HTTP {response.status} 오류")
+                            return {}
+                            
+            except Exception as e:
+                if attempt < max_retries and "HTTP" in str(e) and any(code in str(e) for code in ["429", "503", "502", "504"]):
+                    # 재시도 가능한 네트워크 오류
+                    delay = 10 * (2 ** attempt)
+                    print(f"  ⚠️  게임 ID {app_id}: 네트워크 오류 - {attempt + 1}회 실패, {delay}초 후 재시도... ({str(e)})")
+                    await asyncio.sleep(delay)
+                    continue
+                elif attempt == max_retries:
+                    print(f"  ❌ 게임 ID {app_id}: 최대 재시도 횟수 초과 - {str(e)}")
+                    raise Exception(f"최대 재시도 횟수({max_retries})를 초과했습니다. 마지막 오류: {str(e)}")
+                else:
+                    print(f"  ❌ 게임 ID {app_id}: 종합 정보 추출 중 오류 - {str(e)}")
+                    return {}
+        
+        return {}
 
 
 # 편의 함수들
-async def get_steam_game_info(app_id: int) -> Dict[str, Any]:
+async def get_steam_game_info(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
     """
     Steam 게임 ID를 입력받아 모든 정보를 반환하는 비동기 함수
     
     Args:
         app_id (int): Steam 게임 ID
+        max_retries (int): 최대 재시도 횟수 (기본값: 7 - 총 대기시간 약 5분)
         
     Returns:
         Dict[str, Any]: 게임의 모든 정보
@@ -440,15 +469,16 @@ async def get_steam_game_info(app_id: int) -> Dict[str, Any]:
         print(f"태그: {info['tags']}")
     """
     crawler = ComprehensiveGameCrawler()
-    return await crawler.get_comprehensive_game_info(app_id)
+    return await crawler.get_comprehensive_game_info(app_id, max_retries)
 
 
-def get_steam_game_info_sync(app_id: int) -> Dict[str, Any]:
+def get_steam_game_info_sync(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
     """
     Steam 게임 ID를 입력받아 모든 정보를 반환하는 동기 함수
     
     Args:
         app_id (int): Steam 게임 ID
+        max_retries (int): 최대 재시도 횟수 (기본값: 7 - 총 대기시간 약 5분)
         
     Returns:
         Dict[str, Any]: 게임의 모든 정보
@@ -459,7 +489,7 @@ def get_steam_game_info_sync(app_id: int) -> Dict[str, Any]:
         print(f"가격: {info['price_info']['current_price']}")
         print(f"태그: {info['tags']}")
     """
-    return asyncio.run(get_steam_game_info(app_id))
+    return asyncio.run(get_steam_game_info(app_id, max_retries))
 
 
 def save_game_info_json(game_info: Dict[str, Any], filename: Optional[str] = None) -> str:
@@ -569,10 +599,11 @@ def print_game_info(game_info: Dict[str, Any]):
     print(f"🖼️ 헤더 이미지: {game_info.get('header_images', ['N/A'])[0]}")
 
 
-async def main():
+async def main(save=False):
     # 테스트
     test_games = [
-        #(1091500, "Cyberpunk 2077"),
+        (1091500, "Cyberpunk 2077"),
+        (2456740, "inZOI"),
         #(570, "Dota 2"),
         #(730, "Counter-Strike 2")
         (1284790,'unable')
@@ -589,13 +620,13 @@ async def main():
         game_info = await get_steam_game_info(app_id)
         print_game_info(game_info)
         
-        if game_info:
+        if game_info and save:
             # 개별 게임 정보를 JSON으로 저장
             save_game_info_json(game_info)
             all_games_info.append(game_info)
     
     # 모든 게임 정보를 CSV로 저장
-    if all_games_info:
+    if all_games_info and save:
         save_multiple_games_csv(all_games_info, "test_games.csv")
         
         print(f"\n📊 총 {len(all_games_info)}개 게임 정보 수집 완료!")
@@ -603,4 +634,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    info = get_steam_game_info_sync(1091500)
+    print_game_info(info)

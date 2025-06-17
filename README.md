@@ -7,7 +7,24 @@ Steam 게임의 태그 정보를 크롤링하는 Python 프로그램입니다.
 - Steam 게임 페이지에서 태그 정보 추출
 - 비동기 크롤링으로 빠른 데이터 수집
 - JSON과 CSV 형식으로 결과 저장
-- **🆕 인기 게임 필터링 기능** - 리뷰 수가 많은 의미있는 게임만 선별
+- MySQL 데이터베이스 연결 지원
+
+## 크롤러 모듈
+
+### 1. crawler.py (구현 예정)
+- Steam API에서 모든 게임 목록을 자동으로 수집
+- 수집된 모든 게임의 상세 정보를 크롤링
+- 대량 게임 데이터 처리에 최적화
+
+### 2. single_game_crawler.py
+- 개별 게임의 상세 정보를 크롤링
+- 게임 기본 정보, 가격, 리뷰, 개발사/퍼블리셔 등 포함
+- Steam API에서 제공하는 모든 게임 정보 수집
+
+### 3. single_game_tag_crawler.py
+- Steam API에서 제공하지 않는 태그 정보 전용 크롤링
+- 게임 페이지에서 직접 태그 정보를 추출
+- 태그 데이터만 필요한 경우 사용
 
 ## 설치 방법
 
@@ -36,31 +53,7 @@ pip install -r requirements.txt
 
 ## 사용 방법
 
-### 1. 인기 게임 필터링 (추천)
-
-의미없는 게임들을 제외하고 리뷰 수가 많은 인기 게임들만 선별합니다:
-
-```bash
-# Poetry 사용 시
-poetry shell
-python run_game_filter.py
-
-# pip 사용 시
-python run_game_filter.py
-```
-
-**필터링 기준:**
-- Steam Spy 인기 게임 목록 (소유자 수, 플레이어 수 상위)
-- 사용자 설정 최소 리뷰 수 (기본값: 100개)
-- 인기 장르별 게임 포함
-
-**생성되는 파일:**
-- `data/steam_game_id_list.csv` - 필터링된 게임 ID 목록
-- `data/steam_game_id_list_detailed.csv` - 게임 ID + 리뷰 수 정보
-
-### 2. 게임 태그 크롤링
-
-필터링된 게임 목록으로 태그 정보를 수집합니다:
+### 전체 게임 크롤링 (구현 예정)
 
 ```bash
 # Poetry 사용 시
@@ -71,33 +64,60 @@ python src/crawler.py
 python src/crawler.py
 ```
 
-## 필터링 기능 상세
+### 개별 게임 정보 크롤링
 
-### Steam Spy API 활용
-- **top100owned**: 소유자 수 상위 100개 게임
-- **top100in2weeks**: 최근 2주 플레이어 수 상위 100개 게임  
-- **top100forever**: 평생 플레이어 수 상위 100개 게임
-- **장르별 게임**: Action, Adventure, RPG, Strategy, Simulation, Indie
+```python
+from src.single_game_crawler import get_steam_game_info_sync
 
-### Steam Reviews API 활용
-- 각 게임의 총 리뷰 수 확인
-- 사용자 설정 최소 리뷰 수로 필터링
-- 리뷰 수 순으로 정렬
+# 개별 게임 정보 크롤링
+game_info = get_steam_game_info_sync(1091500)  # Cyberpunk 2077
+print(game_info)
+```
 
-### 필터링 장점
-- **의미있는 데이터**: 실제로 플레이되고 리뷰가 많은 게임만 선별
-- **효율적인 크롤링**: 불필요한 게임 제외로 크롤링 시간 단축
-- **데이터 품질 향상**: 태그 정보가 풍부한 게임들로 한정
+### 개별 게임 태그 크롤링
+
+```python
+from src.single_game_tag_crawler import get_steam_game_tags_sync
+
+# 게임 태그만 크롤링
+tags = get_steam_game_tags_sync(1091500)  # Cyberpunk 2077
+print(tags)
+```
+
+### 태그 분석
+
+태그가 없는 게임 ID를 찾는 도구:
+
+```bash
+# Poetry 사용 시
+poetry shell
+python src/_tag/find_missing_tags.py
+
+# pip 사용 시
+python src/_tag/find_missing_tags.py
+```
+
+## 데이터베이스 설정
+
+`.env` 파일을 생성하여 MySQL 연결 정보를 설정하세요:
+
+```
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=your_username
+MYSQL_PW=your_password
+MYSQL_DB_NAME=your_database_name
+```
 
 ## 결과
 
 - `data/steam_tags.json`: JSON 형식의 크롤링 결과
-- `data/steam_tags.csv`: CSV 형식의 크롤링 결과 
-- `data/steam_game_id_list.csv`: 필터링된 게임 ID 목록
-- `data/steam_game_id_list_detailed.csv`: 상세 게임 정보
+- `data/steam_tags.csv`: CSV 형식의 크롤링 결과
+- `data/missing_tags_game_ids.csv`: 태그가 없는 게임 ID 목록
+- `data/game_info/`: 개별 게임 정보 JSON 파일들
 
 ## 주의사항
 
-- 필터링 작업은 10-30분 정도 소요됩니다
-- Steam API 호출 제한으로 각 요청마다 대기 시간이 있습니다
-- 안정적인 네트워크 연결이 필요합니다 
+- 안정적인 네트워크 연결이 필요합니다
+- MySQL 데이터베이스 연결 설정이 필요합니다
+- Steam API 호출 제한을 고려하여 적절한 대기 시간을 설정합니다
