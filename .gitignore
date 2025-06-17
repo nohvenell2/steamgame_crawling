@@ -42,6 +42,7 @@ htmlcov/
 .nox/
 coverage.xml
 *.cover
+.backups/
 
 # Jupyter Notebook
 .ipynb_checkpoints
