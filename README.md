@@ -1,4 +1,4 @@
-# Steam Game Tag Crawler
+# Steam Game Crawler
 
 Steam 게임의 태그 정보를 크롤링하는 Python 프로그램입니다.
 
