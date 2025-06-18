@@ -41,5 +41,5 @@ class SteamGameList:
             return set()
 if __name__ == "__main__":
     steam_game_list = SteamGameList()
-    result = steam_game_list.get_all_steam_games(limit=100)
+    result = steam_game_list.get_all_steam_games(limit=10)
     print(result)

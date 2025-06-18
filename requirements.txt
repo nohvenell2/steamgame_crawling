@@ -4,4 +4,5 @@ aiohttp>=3.9.0
 pandas>=2.1.0
 tqdm>=4.66.0
 pymysql>=1.1.0
-python-dotenv>=1.0.0 
+python-dotenv>=1.0.0
+sqlalchemy>=2.0.0 

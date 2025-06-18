@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Steam game tag crawler"
 authors = ["nohvenell2 <nohvenell2@gmail.com>"]
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.12"
@@ -14,6 +15,7 @@ pandas = ">=2.1.0"
 tqdm = ">=4.66.0"
 pymysql = ">=1.1.0"
 python-dotenv = ">=1.0.0"
+sqlalchemy = ">=2.0.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

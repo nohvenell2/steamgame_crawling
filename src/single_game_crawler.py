@@ -8,6 +8,15 @@ import json
 import csv
 import os
 from pathlib import Path
+import logging
+
+# 데이터베이스 관련 import
+try:
+    from database.inserter import GameInserter
+    DB_AVAILABLE = True
+except ImportError:
+    print("⚠️  데이터베이스 모듈을 찾을 수 없습니다. JSON 저장 모드만 사용 가능합니다.")
+    DB_AVAILABLE = False
 
 class ComprehensiveGameCrawler:
     def __init__(self):
@@ -782,11 +791,12 @@ async def main(save=False):
     # 테스트
     test_games = [
         (1091500, "Cyberpunk 2077"),
-        (2456740, "inZOI"),
+        #(2456740, "inZOI"),
         (570, "Dota 2"),
         (730, "Counter-Strike 2"),
         (203770,"CK2"),
-        (1771300,"KCD2")
+        (1771300,"KCD2"),
+        #(1284790,"Unknown")
     ]
     
     all_games_info = []
