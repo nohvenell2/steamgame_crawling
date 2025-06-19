@@ -239,7 +239,7 @@ class MinimalGameCrawler:
                 실패시: {'success': False, 'error': 'error_type', 'message': 'error_message', 'app_id': app_id}
         """
         url = f"{self.base_url}{app_id}"
-        logger.info(f"핵심 정보 크롤링 중: {url}")
+        logger.info(f"핵심 정보 크롤링 중: {app_id}")
         
         for attempt in range(max_retries + 1):
             try:
@@ -294,7 +294,7 @@ class MinimalGameCrawler:
                         elif response.status in [429, 503, 502, 504]:
                             if attempt < max_retries:
                                 delay = 2 * (2 ** attempt)  # 2초, 4초, 8초, 16초...
-                                logger.warning(f"게임 ID {app_id}: HTTP {response.status} - {delay}초 후 재시도...")
+                                logger.warning(f"게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
                                 await asyncio.sleep(delay)
                                 continue
                             else:
@@ -319,7 +319,7 @@ class MinimalGameCrawler:
             except Exception as e:
                 if attempt < max_retries:
                     delay = 2 * (2 ** attempt)
-                    logger.warning(f"게임 ID {app_id}: 오류 발생 - {delay}초 후 재시도... ({str(e)})")
+                    logger.warning(f"게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
                     await asyncio.sleep(delay)
                     continue
                 else:
@@ -333,6 +333,7 @@ class MinimalGameCrawler:
                     }
         
         # 이론적으로 도달하지 않는 코드이지만 안전을 위해
+        logger.error(f"게임 ID {app_id}: 크롤링 실패. 알 수 없는 오류")
         return {
             'success': False,
             'error': 'unknown',
@@ -342,7 +343,7 @@ class MinimalGameCrawler:
 
 
 # 편의 함수들
-async def get_minimal_steam_info(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
+async def get_steam_game_info_crawler_minimal(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
     """
     Steam 게임 ID로 핵심 크롤링 정보만 가져오는 비동기 함수
     
@@ -360,7 +361,7 @@ async def get_minimal_steam_info(app_id: int, max_retries: int = 7) -> Dict[str,
     return await crawler.get_minimal_game_info(app_id, max_retries)
 
 
-def get_minimal_steam_info_sync(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
+def get_steam_game_info_crawler_minimal_sync(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
     """
     Steam 게임 ID로 핵심 크롤링 정보만 가져오는 동기 함수
     
@@ -373,7 +374,7 @@ def get_minimal_steam_info_sync(app_id: int, max_retries: int = 7) -> Dict[str, 
             성공시: {'success': True, 'data': {...}}
             실패시: {'success': False, 'error': 'error_type', 'message': 'error_message', 'app_id': app_id}
     """
-    return asyncio.run(get_minimal_steam_info(app_id, max_retries))
+    return asyncio.run(get_steam_game_info_crawler_minimal(app_id, max_retries))
 
 
 def print_minimal_info(result: Dict[str, Any]):
@@ -450,7 +451,7 @@ async def main():
         print(f"테스트: {expected_title} (ID: {app_id})")
         print(f"{'='*50}")
         
-        result = await get_minimal_steam_info(app_id)
+        result = await get_steam_game_info_crawler_minimal(app_id)
         print_minimal_info(result)
 
 
@@ -459,4 +460,4 @@ if __name__ == "__main__":
     setup_logger("INFO")
     
     # 테스트 실행
-    asyncio.run(main()) 
+    print(get_steam_game_info_crawler_minimal_sync(1091500))

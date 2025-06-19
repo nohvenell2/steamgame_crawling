@@ -680,7 +680,7 @@ class ComprehensiveGameCrawler:
                 if attempt < max_retries and "HTTP" in str(e) and any(code in str(e) for code in ["429", "503", "502", "504"]):
                     # 재시도 가능한 네트워크 오류
                     delay = 2 * (2 ** attempt)
-                    logger.warning(f"게임 ID {app_id}: 네트워크 오류 - {attempt + 1}회 실패, {delay}초 후 재시도... ({str(e)})")
+                    logger.warning(f"게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
                     await asyncio.sleep(delay)
                     continue
                 elif attempt == max_retries:
@@ -712,7 +712,7 @@ class ComprehensiveGameCrawler:
 
 
 # 편의 함수들
-async def get_steam_game_info(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
+async def get_steam_game_info_crawler(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
     """
     Steam 게임 ID를 입력받아 모든 정보를 반환하는 비동기 함수
     
@@ -739,7 +739,7 @@ async def get_steam_game_info(app_id: int, max_retries: int = 7) -> Dict[str, An
     return await crawler.get_comprehensive_game_info(app_id, max_retries)
 
 
-def get_steam_game_info_sync(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
+def get_steam_game_info_crawler_sync(app_id: int, max_retries: int = 7) -> Dict[str, Any]:
     """
     Steam 게임 ID를 입력받아 모든 정보를 반환하는 동기 함수
     
@@ -762,7 +762,7 @@ def get_steam_game_info_sync(app_id: int, max_retries: int = 7) -> Dict[str, Any
         else:
             print(f"크롤링 실패: {result['error']} - {result['message']}")
     """
-    return asyncio.run(get_steam_game_info(app_id, max_retries))
+    return asyncio.run(get_steam_game_info_crawler(app_id, max_retries))
 
 
 def save_game_info_json(result: Dict[str, Any], filename: Optional[str] = None) -> str:
@@ -930,7 +930,7 @@ async def main(save=False):
         print(f"테스트 중: {expected_title} (ID: {app_id})")
         print(f"{'='*50}")
         
-        result = await get_steam_game_info(app_id)
+        result = await get_steam_game_info_crawler(app_id)
         print_game_info(result)
         
         if result.get('success', False) and save:
