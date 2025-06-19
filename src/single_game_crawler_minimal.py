@@ -71,7 +71,7 @@ class MinimalGameCrawler:
                     html = await response.text()
                     
                     if 'agecheck' in html or 'agegate' in html:
-                        logger.info("나이 인증 페이지 감지, 우회 중...")
+                        logger.debug("[CRW] 나이 인증 페이지 감지, 우회 중...")
                         form_data = {
                             'snr': '1_agecheck_agecheck__age-gate',
                             'ageDay': '1',
@@ -85,7 +85,7 @@ class MinimalGameCrawler:
                     
                     return html
         except Exception as e:
-            logger.error(f"나이 인증 처리 중 오류: {str(e)}")
+            logger.error(f"[CRW] 나이 인증 처리 중 오류: {str(e)}")
             return None
 
     def extract_user_tags(self, soup: BeautifulSoup) -> List[str]:
@@ -173,7 +173,7 @@ class MinimalGameCrawler:
                         break
                         
         except Exception as e:
-            logger.error(f"리뷰 정보 추출 중 오류: {e}")
+            logger.error(f"[CRW] 리뷰 정보 추출 중 오류: {e}")
         
         return review_info
 
@@ -225,7 +225,7 @@ class MinimalGameCrawler:
                     price_info['discount_percent'] = int(discount_match.group(1))
                     
         except Exception as e:
-            logger.error(f"가격 정보 추출 중 오류: {e}")
+            logger.error(f"[CRW] 가격 정보 추출 중 오류: {e}")
         
         return price_info
 
@@ -239,7 +239,7 @@ class MinimalGameCrawler:
                 실패시: {'success': False, 'error': 'error_type', 'message': 'error_message', 'app_id': app_id}
         """
         url = f"{self.base_url}{app_id}"
-        logger.info(f"핵심 정보 크롤링 중: {app_id}")
+        logger.debug(f"[CRW] 핵심 정보 크롤링 중: {app_id}")
         
         for attempt in range(max_retries + 1):
             try:
@@ -267,7 +267,7 @@ class MinimalGameCrawler:
                             # 게임 제목으로 유효성 확인
                             title_element = soup.select_one('.apphub_AppName, h1.pageheader, .game_title h1')
                             if not title_element:
-                                logger.error(f"게임 ID {app_id}: 유효하지 않은 게임 페이지")
+                                logger.error(f"[CRW] 게임 ID {app_id}: 유효하지 않은 게임 페이지")
                                 return {
                                     'success': False,
                                     'error': 'invalid_game_page',
@@ -284,7 +284,7 @@ class MinimalGameCrawler:
                                 'review_info': self.extract_review_info(soup),
                                 'localized_price': self.extract_localized_price(soup)
                             }
-                            
+                            logger.info(f"[CRW] 정보 크롤링 완료: {minimal_info['title']} ({minimal_info['app_id']})")
                             return {
                                 'success': True,
                                 'data': minimal_info
@@ -294,11 +294,11 @@ class MinimalGameCrawler:
                         elif response.status in [429, 503, 502, 504]:
                             if attempt < max_retries:
                                 delay = 2 * (2 ** attempt)  # 2초, 4초, 8초, 16초...
-                                logger.warning(f"게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
+                                logger.warning(f"[CRW] 게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
                                 await asyncio.sleep(delay)
                                 continue
                             else:
-                                logger.error(f"게임 ID {app_id}: HTTP {response.status} - 최대 재시도 횟수 초과")
+                                logger.error(f"[CRW] 게임 ID {app_id}: HTTP {response.status} - 최대 재시도 횟수 초과")
                                 return {
                                     'success': False,
                                     'error': 'rate_limit_exceeded',
@@ -307,7 +307,7 @@ class MinimalGameCrawler:
                                     'http_status': response.status
                                 }
                         else:
-                            logger.error(f"게임 ID {app_id}: HTTP {response.status} 오류")
+                            logger.error(f"[CRW] 게임 ID {app_id}: HTTP {response.status} 오류")
                             return {
                                 'success': False,
                                 'error': 'http_error',
@@ -319,11 +319,11 @@ class MinimalGameCrawler:
             except Exception as e:
                 if attempt < max_retries:
                     delay = 2 * (2 ** attempt)
-                    logger.warning(f"게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
+                    logger.warning(f"[CRW] 게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
                     await asyncio.sleep(delay)
                     continue
                 else:
-                    logger.error(f"게임 ID {app_id}: 크롤링 실패 - {str(e)}")
+                    logger.error(f"[CRW] 게임 ID {app_id}: 크롤링 실패 - {str(e)}")
                     return {
                         'success': False,
                         'error': 'exception',
@@ -333,7 +333,7 @@ class MinimalGameCrawler:
                     }
         
         # 이론적으로 도달하지 않는 코드이지만 안전을 위해
-        logger.error(f"게임 ID {app_id}: 크롤링 실패. 알 수 없는 오류")
+        logger.error(f"[CRW] 게임 ID {app_id}: 크롤링 실패. 알 수 없는 오류")
         return {
             'success': False,
             'error': 'unknown',
@@ -460,4 +460,4 @@ if __name__ == "__main__":
     setup_logger("INFO")
     
     # 테스트 실행
-    print(get_steam_game_info_crawler_minimal_sync(1091500))
+    print(get_steam_game_info_crawler_minimal_sync(3489700))

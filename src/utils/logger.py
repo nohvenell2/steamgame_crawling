@@ -15,7 +15,7 @@ def setup_logger(level: str = "INFO", format_string: Optional[str] = None) -> No
         format_string (str, optional): 로그 포맷 문자열
     """
     if format_string is None:
-        format_string = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format_string = '%(asctime)s - %(message)s - %(name)s - %(levelname)s'
     
     logging.basicConfig(
         level=getattr(logging, level.upper()),
