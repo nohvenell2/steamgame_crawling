@@ -14,13 +14,14 @@ CREATE TABLE IF NOT EXISTS games (
     release_date DATE,
     developer VARCHAR(255),
     publisher VARCHAR(255),
-    crawled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
     -- 단순화된 필드들
     header_image_url VARCHAR(500),
     system_requirements_minimum TEXT,
     system_requirements_recommended TEXT,
-    
+    metacritic_score INT,
+
     -- 인덱스
     INDEX idx_title (title),
     INDEX idx_developer (developer),
