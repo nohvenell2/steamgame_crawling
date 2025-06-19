@@ -64,5 +64,9 @@ logs/
 # data
 data/
 
+# temp
+*temp*
+temp/
+
 # todo
 todo.md

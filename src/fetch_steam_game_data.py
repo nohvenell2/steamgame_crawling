@@ -152,39 +152,4 @@ if __name__ == "__main__":
     
     game_details = get_game_details(game_id)
     
-    if game_details and str(game_id) in game_details:
-        game_data = game_details.get(str(game_id))
-        if game_data and game_data.get('success'):
-            data = game_data.get('data')
-            if data:
-                print(f"실제 게임명: {data.get('name', 'Unknown')}")
-                
-                # 시스템 요구사항 테스트
-                pc_req = data.get('pc_requirements', {})
-                if pc_req:
-                    min_req_html = pc_req.get('minimum', '')
-                    if min_req_html:
-                        print(f"\n--- 최소 요구사항 (HTML) ---")
-                        print(min_req_html[:300] + "...")
-                        
-                        min_req_text = clean_system_requirements(min_req_html)
-                        print(f"\n--- 최소 요구사항 (변환) ---")
-                        print(min_req_text)
-                    
-                    rec_req_html = pc_req.get('recommended', '')
-                    if rec_req_html:
-                        print(f"\n--- 권장 사양 (HTML) ---")
-                        print(rec_req_html[:300] + "...")
-                        
-                        rec_req_text = clean_system_requirements(rec_req_html)
-                        print(f"\n--- 권장 사양 (변환) ---")
-                        print(rec_req_text)
-                else:
-                    print("시스템 요구사항 정보가 없습니다.")
-                    
-            else:
-                print("데이터를 찾을 수 없습니다.")
-        else:
-            print("API 요청이 실패했습니다.")
-    else:
-        print("게임 정보를 가져올 수 없습니다.")
+    

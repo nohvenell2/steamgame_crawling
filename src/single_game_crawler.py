@@ -1,3 +1,37 @@
+"""
+Steam 게임 크롤링을 위한 최소한의 크롤러
+
+이 모듈은 Steam API로 제공되지 않는 정보만 크롤링합니다:
+- 사용자가 붙인 태그
+- 리뷰 통계 (긍정 비율 등)
+- 현지화된 가격 정보
+
+반환 구조:
+- 성공시: {'success': True, 'data': {...}}
+- 실패시: {'success': False, 'error': 'error_type', 'message': 'error_message', 'app_id': app_id}
+
+가능한 에러 타입:
+- 'age_verification_failed': 나이 인증 처리 실패
+- 'invalid_game_page': 유효하지 않은 게임 페이지
+- 'rate_limit_exceeded': 요청 제한 초과 (최대 재시도 초과)
+- 'http_error': HTTP 에러 (404, 500 등)
+- 'exception': 예외 발생 (네트워크 오류 등)
+- 'unknown': 알 수 없는 오류
+
+사용 예시:
+```python
+import asyncio
+from single_game_crawler_minimal import get_minimal_steam_info, setup_logger
+
+# 로거 설정 (선택사항)
+setup_logger("INFO")
+
+# 프로그램 실행
+result = get_steam_game_info_sync(1091500)
+print_game_info(result)
+```
+"""
+
 import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
@@ -8,6 +42,13 @@ import json
 import csv
 import os
 from pathlib import Path
+import logging
+
+# 로거 유틸리티 import
+from utils.logger import setup_logger
+
+# 로거 설정
+logger = logging.getLogger(__name__)
 
 class ComprehensiveGameCrawler:
     def __init__(self):
@@ -32,7 +73,7 @@ class ComprehensiveGameCrawler:
                     html = await response.text()
                     
                     if 'agecheck' in html or 'agegate' in html:
-                        print("나이 인증 페이지 감지, 우회 중...")
+                        logger.info("나이 인증 페이지 감지, 우회 중...")
                         form_data = {
                             'snr': '1_agecheck_agecheck__age-gate',
                             'ageDay': '1',
@@ -46,7 +87,7 @@ class ComprehensiveGameCrawler:
                     
                     return html
         except Exception as e:
-            print(f"나이 인증 처리 중 오류: {str(e)}")
+            logger.error(f"나이 인증 처리 중 오류: {str(e)}")
             return None
 
     def extract_basic_info(self, soup: BeautifulSoup, app_id: int) -> Dict[str, Any]:
@@ -160,7 +201,7 @@ class ComprehensiveGameCrawler:
                     detailed_desc = detailed_desc[:5000] + "..."
                     
         except Exception as e:
-            print(f"상세 설명 추출 중 오류: {e}")
+            logger.error(f"상세 설명 추출 중 오류: {e}")
         
         return detailed_desc
 
@@ -261,7 +302,7 @@ class ComprehensiveGameCrawler:
                             genres.append(genre)
             
         except Exception as e:
-            print(f"장르 정보 추출 중 오류: {e}")
+            logger.error(f"장르 정보 추출 중 오류: {e}")
         
         # 중복 제거 및 정리
         unique_genres = []
@@ -410,7 +451,7 @@ class ComprehensiveGameCrawler:
                         break
                         
         except Exception as e:
-            print(f"개발사/퍼블리셔 추출 중 오류: {e}")
+            logger.error(f"개발사/퍼블리셔 추출 중 오류: {e}")
         
         return dev_pub_info
 
@@ -494,7 +535,7 @@ class ComprehensiveGameCrawler:
                         break
                         
         except Exception as e:
-            print(f"리뷰 정보 추출 중 오류: {e}")
+            logger.error(f"리뷰 정보 추출 중 오류: {e}")
         
         return review_info
 
@@ -541,9 +582,16 @@ class ComprehensiveGameCrawler:
         return sys_req
 
     async def get_comprehensive_game_info(self, app_id: int, max_retries: int = 7) -> Dict[str, Any]:
-        """게임 ID를 입력받아 모든 정보를 종합적으로 추출합니다."""
+        """
+        게임 ID를 입력받아 모든 정보를 종합적으로 추출합니다.
+        
+        Returns:
+            Dict[str, Any]: 
+                성공시: {'success': True, 'data': {...}}
+                실패시: {'success': False, 'error': 'error_type', 'message': 'error_message', 'app_id': app_id}
+        """
         url = f"{self.base_url}{app_id}"
-        print(f"종합 정보 추출 중: {url}")
+        logger.info(f"종합 정보 추출 중: {url}")
         
         for attempt in range(max_retries + 1):
             try:
@@ -560,7 +608,12 @@ class ComprehensiveGameCrawler:
                             if 'agecheck' in response.url.path or 'agegate' in html.lower():
                                 html = await self.handle_age_check(session, str(response.url))
                                 if not html:
-                                    return {}
+                                    return {
+                                        'success': False,
+                                        'error': 'age_verification_failed',
+                                        'message': '나이 인증 처리 실패',
+                                        'app_id': app_id
+                                    }
                             
                             soup = BeautifulSoup(html, 'html.parser')
                             
@@ -580,42 +633,82 @@ class ComprehensiveGameCrawler:
                                 'system_requirements': self.extract_system_requirements(soup)
                             }
                             if not game_info.get('title') or game_info.get('title') == 'Unknown' :
-                                print(f"  ❌ 게임 ID {app_id}: 게임 정보 추출 불가능")
-                                return {}
-                            return game_info
+                                logger.error(f"게임 ID {app_id}: 게임 정보 추출 불가능")
+                                return {
+                                    'success': False,
+                                    'error': 'invalid_game_page',
+                                    'message': '게임 정보 추출 불가능 (제목 없음)',
+                                    'app_id': app_id
+                                }
+                            
+                            logger.info(f"게임 ID {app_id}: 종합 정보 추출 성공 - {game_info['title']}")
+                            return {
+                                'success': True,
+                                'data': game_info
+                            }
                         
                         # 요청 제한 관련 상태 코드
                         elif response.status in [429, 503, 502, 504]:
                             if attempt < max_retries:
-                                # 지수적으로 증가하는 딜레이 (10초, 20초, 40초, 80초, 160초, 320초, 640초)
+                                # 지수적으로 증가하는 딜레이 (2초, 4초, 8초, 16초, 32초, 64초, 128초)
                                 delay = 2 * (2 ** attempt)
-                                print(f"  ⚠️  게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
+                                logger.warning(f"게임 ID {app_id}: HTTP {response.status} - {attempt + 1}회 실패, {delay}초 후 재시도...")
                                 await asyncio.sleep(delay)
                                 continue
                             else:
-                                print(f"  ❌ 게임 ID {app_id}: HTTP {response.status} - 최대 재시도 횟수 초과")
-                                raise Exception(f"HTTP {response.status}: 최대 재시도 횟수({max_retries})를 초과했습니다. 요청이 지속적으로 거부되고 있습니다.")
+                                logger.error(f"게임 ID {app_id}: HTTP {response.status} - 최대 재시도 횟수 초과")
+                                return {
+                                    'success': False,
+                                    'error': 'rate_limit_exceeded',
+                                    'message': f'HTTP {response.status} - 최대 재시도 횟수 ({max_retries}) 초과',
+                                    'app_id': app_id,
+                                    'http_status': response.status
+                                }
                         
                         # 기타 HTTP 에러
                         else:
-                            print(f"  ❌ 게임 ID {app_id}: HTTP {response.status} 오류")
-                            return {}
+                            logger.error(f"게임 ID {app_id}: HTTP {response.status} 오류")
+                            return {
+                                'success': False,
+                                'error': 'http_error',
+                                'message': f'HTTP {response.status} 오류',
+                                'app_id': app_id,
+                                'http_status': response.status
+                            }
                             
             except Exception as e:
                 if attempt < max_retries and "HTTP" in str(e) and any(code in str(e) for code in ["429", "503", "502", "504"]):
                     # 재시도 가능한 네트워크 오류
                     delay = 2 * (2 ** attempt)
-                    print(f"  ⚠️  게임 ID {app_id}: 네트워크 오류 - {attempt + 1}회 실패, {delay}초 후 재시도... ({str(e)})")
+                    logger.warning(f"게임 ID {app_id}: 네트워크 오류 - {attempt + 1}회 실패, {delay}초 후 재시도... ({str(e)})")
                     await asyncio.sleep(delay)
                     continue
                 elif attempt == max_retries:
-                    print(f"  ❌ 게임 ID {app_id}: 최대 재시도 횟수 초과 - {str(e)}")
-                    raise Exception(f"최대 재시도 횟수({max_retries})를 초과했습니다. 마지막 오류: {str(e)}")
+                    logger.error(f"게임 ID {app_id}: 최대 재시도 횟수 초과 - {str(e)}")
+                    return {
+                        'success': False,
+                        'error': 'exception',
+                        'message': f'최대 재시도 횟수 ({max_retries}) 초과 - {str(e)}',
+                        'app_id': app_id,
+                        'exception_type': type(e).__name__
+                    }
                 else:
-                    print(f"  ❌ 게임 ID {app_id}: 종합 정보 추출 중 오류 - {str(e)}")
-                    return {}
+                    logger.error(f"게임 ID {app_id}: 종합 정보 추출 중 오류 - {str(e)}")
+                    return {
+                        'success': False,
+                        'error': 'exception',
+                        'message': f'종합 정보 추출 중 오류 - {str(e)}',
+                        'app_id': app_id,
+                        'exception_type': type(e).__name__
+                    }
         
-        return {}
+        # 이론적으로 도달하지 않는 코드이지만 안전을 위해
+        return {
+            'success': False,
+            'error': 'unknown',
+            'message': '알 수 없는 오류',
+            'app_id': app_id
+        }
 
 
 # 편의 함수들
@@ -628,13 +721,19 @@ async def get_steam_game_info(app_id: int, max_retries: int = 7) -> Dict[str, An
         max_retries (int): 최대 재시도 횟수 (기본값: 7 - 총 대기시간 약 5분)
         
     Returns:
-        Dict[str, Any]: 게임의 모든 정보
+        Dict[str, Any]: 
+            성공시: {'success': True, 'data': {...}}
+            실패시: {'success': False, 'error': 'error_type', 'message': 'error_message', 'app_id': app_id}
         
     Example:
-        info = await get_steam_game_info(1091500)  # Cyberpunk 2077
-        print(f"제목: {info['title']}")
-        print(f"가격: {info['price_info']['current_price']}")
-        print(f"태그: {info['tags']}")
+        result = await get_steam_game_info(1091500)  # Cyberpunk 2077
+        if result['success']:
+            info = result['data']
+            print(f"제목: {info['title']}")
+            print(f"가격: {info['price_info']['current_price']}")
+            print(f"태그: {info['tags']}")
+        else:
+            print(f"크롤링 실패: {result['error']} - {result['message']}")
     """
     crawler = ComprehensiveGameCrawler()
     return await crawler.get_comprehensive_game_info(app_id, max_retries)
@@ -649,21 +748,32 @@ def get_steam_game_info_sync(app_id: int, max_retries: int = 7) -> Dict[str, Any
         max_retries (int): 최대 재시도 횟수 (기본값: 7 - 총 대기시간 약 5분)
         
     Returns:
-        Dict[str, Any]: 게임의 모든 정보
+        Dict[str, Any]: 
+            성공시: {'success': True, 'data': {...}}
+            실패시: {'success': False, 'error': 'error_type', 'message': 'error_message', 'app_id': app_id}
         
     Example:
-        info = get_steam_game_info_sync(1091500)  # Cyberpunk 2077
-        print(f"제목: {info['title']}")
-        print(f"가격: {info['price_info']['current_price']}")
-        print(f"태그: {info['tags']}")
+        result = get_steam_game_info_sync(1091500)  # Cyberpunk 2077
+        if result['success']:
+            info = result['data']
+            print(f"제목: {info['title']}")
+            print(f"가격: {info['price_info']['current_price']}")
+            print(f"태그: {info['tags']}")
+        else:
+            print(f"크롤링 실패: {result['error']} - {result['message']}")
     """
     return asyncio.run(get_steam_game_info(app_id, max_retries))
 
 
-def save_game_info_json(game_info: Dict[str, Any], filename: Optional[str] = None) -> str:
+def save_game_info_json(result: Dict[str, Any], filename: Optional[str] = None) -> str:
     """게임 정보를 JSON 파일로 저장합니다."""
-    if not game_info:
-        raise ValueError("저장할 게임 정보가 없습니다.")
+    if not result:
+        raise ValueError("저장할 결과가 없습니다.")
+    
+    if not result.get('success', False):
+        raise ValueError("실패한 결과는 저장할 수 없습니다.")
+    
+    game_info = result['data']
     
     # 파일명 생성
     if not filename:
@@ -684,14 +794,22 @@ def save_game_info_json(game_info: Dict[str, Any], filename: Optional[str] = Non
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(game_info, f, ensure_ascii=False, indent=2)
     
-    print(f"✅ 게임 정보가 저장되었습니다: {file_path}")
+    logger.info(f"게임 정보가 저장되었습니다: {file_path}")
     return str(file_path)
 
 
-def save_multiple_games_csv(games_info: List[Dict[str, Any]], filename: Optional[str] = None) -> str:
+def save_multiple_games_csv(results: List[Dict[str, Any]], filename: Optional[str] = None) -> str:
     """여러 게임 정보를 CSV 파일로 저장합니다."""
-    if not games_info:
-        raise ValueError("저장할 게임 정보가 없습니다.")
+    if not results:
+        raise ValueError("저장할 결과가 없습니다.")
+    
+    # 성공한 결과만 필터링
+    successful_results = [result for result in results if result.get('success', False)]
+    
+    if not successful_results:
+        raise ValueError("성공한 결과가 없어 저장할 수 없습니다.")
+    
+    games_info = [result['data'] for result in successful_results]
     
     # 파일명 생성
     if not filename:
@@ -742,7 +860,7 @@ def save_multiple_games_csv(games_info: List[Dict[str, Any]], filename: Optional
             }
             writer.writerow(row)
     
-    print(f"✅ {len(games_info)}개 게임 정보가 CSV로 저장되었습니다: {file_path}")
+    logger.info(f"{len(games_info)}개 게임 정보가 CSV로 저장되었습니다: {file_path}")
     return str(file_path)
 
 
@@ -752,13 +870,26 @@ def load_game_info_json(file_path: str) -> Dict[str, Any]:
         return json.load(f)
 
 
-def print_game_info(game_info: Dict[str, Any]):
+def print_game_info(result: Dict[str, Any]):
     """게임 정보를 보기 좋게 출력합니다."""
-    if not game_info:
-        print("게임 정보를 찾을 수 없습니다.")
+    if not result:
+        print("결과가 없습니다.")
         return
     
-    print(f"\n=== {game_info.get('title', 'Unknown')} (ID: {game_info.get('app_id')}) ===")
+    # 실패한 경우
+    if not result.get('success', False):
+        print(f"❌ 크롤링 실패 (ID: {result.get('app_id', 'Unknown')})")
+        print(f"   오류 타입: {result.get('error', 'unknown')}")
+        print(f"   오류 메시지: {result.get('message', '알 수 없는 오류')}")
+        if 'http_status' in result:
+            print(f"   HTTP 상태: {result['http_status']}")
+        if 'exception_type' in result:
+            print(f"   예외 타입: {result['exception_type']}")
+        return
+    
+    # 성공한 경우
+    game_info = result.get('data', {})
+    print(f"=== {game_info.get('title', 'Unknown')} (ID: {game_info.get('app_id')}) ===")
     print(f"📝 짧은 설명: {game_info.get('description', 'N/A')[:100]}...")
     
     detailed_desc = game_info.get('detailed_description', '')
@@ -779,6 +910,9 @@ def print_game_info(game_info: Dict[str, Any]):
 
 
 async def main(save=False):
+    # 로거 설정
+    setup_logger("INFO")
+    
     # 테스트
     test_games = [
         (1091500, "Cyberpunk 2077"),
@@ -789,28 +923,32 @@ async def main(save=False):
         (1771300,"KCD2")
     ]
     
-    all_games_info = []
+    all_results = []
     
     for app_id, expected_title in test_games:
         print(f"\n{'='*50}")
         print(f"테스트 중: {expected_title} (ID: {app_id})")
         print(f"{'='*50}")
         
-        game_info = await get_steam_game_info(app_id)
-        print_game_info(game_info)
+        result = await get_steam_game_info(app_id)
+        print_game_info(result)
         
-        if game_info and save:
+        if result.get('success', False) and save:
             # 개별 게임 정보를 JSON으로 저장
-            save_game_info_json(game_info)
-            all_games_info.append(game_info)
+            save_game_info_json(result)
+        
+        all_results.append(result)
     
     # 모든 게임 정보를 CSV로 저장
-    """ if all_games_info and save:
-        save_multiple_games_csv(all_games_info, "test_games.csv")
-        
-        print(f"\n📊 총 {len(all_games_info)}개 게임 정보 수집 완료!")
-        print("💾 개별 JSON 파일과 통합 CSV 파일이 data/game_info/ 폴더에 저장되었습니다.") """
+    if all_results and save:
+        successful_count = len([r for r in all_results if r.get('success', False)])
+        if successful_count > 0:
+            save_multiple_games_csv(all_results, "test_games.csv")
+            print(f"\n📊 총 {successful_count}개 게임 정보 수집 완료!")
+            print("💾 개별 JSON 파일과 통합 CSV 파일이 data/game_info/ 폴더에 저장되었습니다.")
+        else:
+            print("⚠️ 저장할 성공한 결과가 없습니다.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main(save=True))
+    asyncio.run(main(save=False))
