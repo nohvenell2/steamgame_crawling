@@ -1,10 +1,5 @@
 """
-Steam 게임 크롤링을 위한 최소한의 크롤러
-
-이 모듈은 Steam API로 제공되지 않는 정보만 크롤링합니다:
-- 사용자가 붙인 태그
-- 리뷰 통계 (긍정 비율 등)
-- 현지화된 가격 정보
+Steam 게임 크롤링을 위한 크롤러
 
 반환 구조:
 - 성공시: {'success': True, 'data': {...}}
@@ -21,7 +16,7 @@ Steam 게임 크롤링을 위한 최소한의 크롤러
 사용 예시:
 ```python
 import asyncio
-from single_game_crawler_minimal import get_minimal_steam_info, setup_logger
+from single_game_crawler import get__steam_info, setup_logger
 
 # 로거 설정 (선택사항)
 setup_logger("INFO")

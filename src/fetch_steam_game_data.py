@@ -1,3 +1,49 @@
+"""
+Steam API를 이용한 게임 데이터 수집 모듈
+
+이 모듈은 Steam Store API를 활용하여 게임의 상세 정보를 수집합니다.
+HTML 크롤링 방식과 달리 공식 API를 사용하므로 더 안정적이고 구조화된 데이터를 제공합니다.
+
+주요 기능:
+- Steam Store API를 통한 게임 정보 수집
+- HTML 콘텐츠를 읽기 쉬운 텍스트로 변환
+- 시스템 요구사항 포맷팅
+- 비동기/동기 처리 모두 지원
+- 여러 게임 동시 처리
+- 자동 재시도 및 에러 처리
+
+반환 구조:
+- 성공시: {'success': True, 'data': {api_response}, 'app_id': app_id}
+- 실패시: {'success': False, 'error': 'error_type', 'message': 'error_message', 'app_id': app_id}
+
+가능한 에러 타입:
+- 'rate_limit_exceeded': API 요청 제한 초과
+- 'http_error': HTTP 에러 (404, 500 등)
+- 'exception': 예외 발생 (네트워크 오류 등)
+- 'unknown': 알 수 없는 오류
+
+사용 예시:
+```python
+import asyncio
+from fetch_steam_game_data import get_steam_game_info_api, setup_logger
+
+# 로거 설정 (선택사항)
+setup_logger("INFO")
+
+# 비동기 사용
+async def main():
+    result = await get_steam_game_info_api(1091500)
+    if result['success']:
+        print(f"게임명: {result['data']['name']}")
+    else:
+        print(f"오류: {result['message']}")
+
+# 동기 사용 (편의 함수)
+result = get_steam_game_info_api_sync(1091500)
+print(result)
+```
+"""
+
 import requests
 import aiohttp
 import asyncio
