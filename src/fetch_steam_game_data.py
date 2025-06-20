@@ -77,13 +77,23 @@ async def get_steam_game_info_api(app_id: int, max_retries: int = 7) -> Dict[str
                     # 성공적인 응답
                     if response.status == 200:
                         raw_data = await response.json()
+                        success = raw_data.get(str(app_id),{}).get('success',False)
                         data = raw_data.get(str(app_id),{}).get('data',{})
-                        logger.info(f"[API] 정보 요청 완료: {data.get('name', '')} ({app_id})")
-                        return {
-                            'success': True,
-                            'data': data,
-                            'app_id': app_id
-                        }
+                        if success and data:
+                            logger.info(f"[API] 정보 요청 완료: {data.get('name', '')} ({app_id})")
+                            return {
+                                'success': success,
+                                'data': data,
+                                'app_id': app_id
+                            }
+                        else:
+                            logger.debug(f"[API] 정보 요청 완료. 데이터 없음: ({app_id})")
+                            return {
+                                'success': False,
+                                'error': 'no_data',
+                                'message': f'Not success or no data at API',
+                                'app_id': app_id
+                            }
                     
                     # 요청 제한 관련 상태 코드 (Steam은 403도 사용)
                     elif response.status in [403, 429, 503, 502, 504]:

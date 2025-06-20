@@ -8,6 +8,7 @@ Steam 게임 데이터를 데이터베이스에 효율적으로 삽입/업데이
     3. 변경점만 업데이트하는 효율적인 로직
     4. HTML 콘텐츠를 읽기 쉬운 텍스트로 변환
     5. 배치 처리 지원
+    6. 하이브리드 배치 처리 (새 게임: bulk insert, 기존 게임: 개별 업데이트)
 
 데이터 소스별 처리:
     - Steam API: 상세한 게임 정보 (설명, 시스템 요구사항, 메타크리틱 점수 등)
@@ -17,25 +18,21 @@ Steam 게임 데이터를 데이터베이스에 효율적으로 삽입/업데이
     - 변경된 필드만 UPDATE (전체 삭제/재삽입 없음)
     - 관련 테이블(장르, 태그, 가격, 리뷰) 개별 변경점 체크
     - 배치 처리로 대량 데이터 효율적 처리
+    - 하이브리드 배치: 새 게임 bulk insert + 기존 게임 선택적 업데이트
 
 사용 예시:
     # 단일 게임 처리
     success = insert_steam_api_game_single(steam_api_data)
     success = insert_steam_crawling_game_single(crawling_data)
-    
-    # 배치 처리
-    success_count, fail_count = insert_steam_api_games_batch(games_list)
-    success_count, fail_count = insert_steam_crawling_games_batch(crawling_list)
+
+    # 배치 처리 (성능 최적화)
+    success_count, fail_count = insert_steam_api_games_batch(api_data_list)
+    success_count, fail_count = insert_steam_crawling_games_batch(crawling_data_list)
     
     # 컨텍스트 매니저 사용
     with GameInserter() as inserter:
         inserter.insert_steam_api_game(data1)
         inserter.insert_steam_crawling_game(data2)
-
-관심사 분리:
-    - 데이터 수집: fetch_steam_game_data.py (순수 API 호출)
-    - 데이터 변환: 이 모듈 (HTML→텍스트, 형식 정규화)
-    - 데이터 저장: 이 모듈 (DB 삽입/업데이트)
 
 처리 대상 테이블:
     - games: 게임 기본 정보
@@ -48,8 +45,9 @@ Steam 게임 데이터를 데이터베이스에 효율적으로 삽입/업데이
 import logging
 import re
 from datetime import datetime, date
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from .models import Game, GameTag, GameGenre, GamePricing, GameReview
 from .connection import get_db_session
@@ -413,7 +411,7 @@ class GameInserter:
             
             # 장르 정보 업데이트 (변경점만)
             self._update_genres(app_id, steam_data.get('genres', []))
-            logger.info(f"[API-DB] 데이터 삽입/업데이트 완료: {title} ({app_id})")
+            logger.debug(f"[API-DB] 데이터 삽입/업데이트 완료: {title} ({app_id})")
             return True
             
         except Exception as e:
@@ -507,7 +505,7 @@ class GameInserter:
             localized_price = crawling_data.get('localized_price', {})
             if localized_price:
                 self._update_localized_pricing(app_id, localized_price, crawled_at)
-            logger.info(f"[CRW-DB] 데이터 삽입/업데이트 완료: {crawling_data.get('title', '')} ({app_id})")
+            logger.debug(f"[CRW-DB] 데이터 삽입/업데이트 완료: {crawling_data.get('title', '')} ({app_id})")
             return True
             
         except Exception as e:
@@ -646,6 +644,386 @@ class GameInserter:
             self._session.add(pricing)
             logger.debug(f"[CRW-DB] 게임 {app_id} 현지화 가격 정보 추가")
 
+    def insert_steam_api_games_hybrid_batch(self, games_data: List[Dict[str, Any]]) -> tuple[int, List[Dict[str, Any]]]:
+        """
+        하이브리드 배치 처리로 Steam API 게임 데이터를 삽입/업데이트
+        - 새 게임: bulk insert (고성능)
+        - 기존 게임: 개별 업데이트 (정확한 변경점 관리)
+        """
+        if not games_data:
+            return 0, []
+        
+        try:
+            # 1. 중복 제거된 games_data 생성
+            seen_app_ids = set()
+            deduplicated_games_data = []
+            for game_data in games_data:
+                app_id = game_data.get('steam_appid') or game_data.get('id')
+                if app_id and app_id not in seen_app_ids:
+                    seen_app_ids.add(app_id)
+                    deduplicated_games_data.append(game_data)
+            games_data = deduplicated_games_data
+            
+            # 모든 app_id 추출
+            app_ids = [data.get('steam_appid') or data.get('id') for data in games_data]
+            app_ids = [aid for aid in app_ids if aid]  # None 제거
+            
+            if not app_ids:
+                logger.error("[API-DB] 유효한 app_id가 없습니다.")
+                return 0, []
+            
+            # 2. 기존 게임 조회 (한 번의 쿼리로)
+            self._session.flush()  # 이전 변경사항 반영
+            existing_app_ids = set(
+                row[0] for row in self._session.execute(
+                    select(Game.app_id).where(Game.app_id.in_(app_ids))
+                ).fetchall()
+            )
+            
+            # 3. 새 게임 vs 기존 게임 분류
+            new_games_data = []
+            existing_games_data = []
+            
+            for game_data in games_data:
+                app_id = game_data.get('steam_appid') or game_data.get('id')
+                if app_id in existing_app_ids:
+                    existing_games_data.append(game_data)
+                else:
+                    new_games_data.append(game_data)
+            
+            logger.debug(f"[API-DB] 새 게임: {len(new_games_data)}개, 기존 게임: {len(existing_games_data)}개")
+            
+            success_count = 0
+            failed_games = []
+            
+            # 4. 새 게임들 bulk insert
+            if new_games_data:
+                new_success, new_fail = self._bulk_insert_new_api_games(new_games_data)
+                success_count += new_success
+                failed_games.extend([{'app_id': app_id, 'error': 'db_insert_failed', 'message': f'Steam API 게임 데이터 삽입/업데이트 실패'} for app_id in new_fail])
+                logger.info(f"[API-DB] 새 게임 bulk insert: 성공 {new_success}개, 실패 {len(new_fail)}개")
+            
+            # 5. 기존 게임들 개별 업데이트
+            if existing_games_data:
+                existing_success, existing_fail = self._update_existing_api_games(existing_games_data)
+                success_count += existing_success
+                failed_games.extend([{'app_id': app_id, 'error': 'db_exception', 'message': f'예외 발생: {str(e)}'} for app_id in existing_fail])
+                logger.info(f"[API-DB] 기존 게임 업데이트: 성공 {existing_success}개, 실패 {len(existing_fail)}개")
+            
+            return success_count, failed_games
+            
+        except Exception as e:
+            logger.error(f"[API-DB] 하이브리드 배치 처리 중 오류: {e}")
+            return 0, []
+    
+    def _bulk_insert_new_api_games(self, new_games_data: List[Dict[str, Any]]) -> tuple[int, List[int]]:
+        """새 게임들을 bulk insert로 처리"""
+        try:
+            # 게임 기본 정보 bulk insert
+            game_objects = []
+            genre_objects = []
+            
+            for steam_data in new_games_data:
+                try:
+                    app_id = steam_data.get('steam_appid') or steam_data.get('id')
+                    if not app_id:
+                        continue
+                    
+                    # 기본 정보 변환
+                    title = steam_data.get('name', '')[:255]
+                    description = steam_data.get('short_description', '')
+                    
+                    # 상세 설명 변환
+                    raw_detailed_description = steam_data.get('detailed_description', '')
+                    detailed_description = self.convert_detailed_description(raw_detailed_description)
+                    
+                    # 출시일 변환
+                    release_info = steam_data.get('release_date', {})
+                    release_date = release_info.get('date', '') if release_info else ''
+                    parsed_release_date = self.parse_steam_release_date(release_date)
+                    
+                    # 개발사/퍼블리셔
+                    developers = steam_data.get('developers', [])
+                    publishers = steam_data.get('publishers', [])
+                    developer = ', '.join(developers)[:255] if developers else None
+                    publisher = ', '.join(publishers)[:255] if publishers else None
+                    
+                    # 이미지 URL
+                    header_image_url = steam_data.get('header_image', '')[:500] if steam_data.get('header_image') else None
+                    
+                    # 시스템 요구사항
+                    pc_requirements = steam_data.get('pc_requirements', {})
+                    raw_min_requirements = pc_requirements.get('minimum', '') if pc_requirements else ''
+                    raw_rec_requirements = pc_requirements.get('recommended', '') if pc_requirements else ''
+                    system_requirements_minimum = self.convert_system_requirements(raw_min_requirements) if raw_min_requirements else None
+                    system_requirements_recommended = self.convert_system_requirements(raw_rec_requirements) if raw_rec_requirements else None
+                    
+                    # 메타크리틱 점수
+                    metacritic = steam_data.get('metacritic', {})
+                    metacritic_score = metacritic.get('score') if metacritic else None
+                    
+                    # 게임 객체 생성
+                    game_obj = {
+                        'app_id': app_id,
+                        'title': title,
+                        'description': description,
+                        'detailed_description': detailed_description,
+                        'release_date': parsed_release_date,
+                        'developer': developer,
+                        'publisher': publisher,
+                        'header_image_url': header_image_url,
+                        'system_requirements_minimum': system_requirements_minimum,
+                        'system_requirements_recommended': system_requirements_recommended,
+                        'metacritic_score': metacritic_score,
+                        'updated_at': datetime.now()
+                    }
+                    game_objects.append(game_obj)
+                    
+                    # 장르 객체들 생성
+                    for genre_data in steam_data.get('genres', []):
+                        genre_name = genre_data.get('description', '')
+                        if genre_name:
+                            genre_objects.append({
+                                'app_id': app_id,
+                                'genre_name': genre_name[:50]
+                            })
+                
+                except Exception as e:
+                    logger.error(f"[API-DB] 게임 데이터 변환 실패 {app_id}: {e}")
+                    continue
+            
+            # Bulk insert 실행
+            if game_objects:
+                self._session.bulk_insert_mappings(Game, game_objects)
+                logger.debug(f"[API-DB] 게임 기본 정보 bulk insert: {len(game_objects)}개")
+            
+            if genre_objects:
+                self._session.bulk_insert_mappings(GameGenre, genre_objects)
+                logger.debug(f"[API-DB] 장르 정보 bulk insert: {len(genre_objects)}개")
+            
+            return len(game_objects), []
+            
+        except Exception as e:
+            logger.error(f"[API-DB] Bulk insert 실패: {e}")
+            return 0, []
+    
+    def _update_existing_api_games(self, existing_games_data: List[Dict[str, Any]]) -> tuple[int, List[int]]:
+        """기존 게임들을 개별 업데이트로 처리"""
+        success_count = 0
+        failed_games = []
+        
+        for steam_data in existing_games_data:
+            try:
+                if self.insert_steam_api_game(steam_data):
+                    success_count += 1
+                else:
+                    failed_games.append({'app_id': steam_data.get('steam_appid') or steam_data.get('id'), 'error': 'db_insert_failed', 'message': 'Steam API 게임 데이터 삽입/업데이트 실패'})
+            except Exception as e:
+                app_id = steam_data.get('steam_appid') or steam_data.get('id')
+                logger.error(f"[API-DB] 기존 게임 업데이트 실패: {e}")
+                failed_games.append({'app_id': app_id, 'error': 'db_exception', 'message': f'예외 발생: {str(e)}'})
+        
+        return success_count, failed_games
+
+    def insert_steam_crawling_games_hybrid_batch(self, games_data: List[Dict[str, Any]]) -> tuple[int, List[Dict[str, Any]]]:
+        """
+        하이브리드 배치 처리로 Steam 크롤링 게임 데이터를 삽입/업데이트
+        - 새 게임: bulk insert (고성능)
+        - 기존 게임: 개별 업데이트 (정확한 변경점 관리)
+        """
+        if not games_data:
+            return 0, []
+        
+        try:
+            # 1. 중복 제거된 games_data 생성
+            seen_app_ids = set()
+            deduplicated_games_data = []
+            for game_data in games_data:
+                app_id = game_data.get('app_id')
+                if app_id and app_id not in seen_app_ids:
+                    seen_app_ids.add(app_id)
+                    deduplicated_games_data.append(game_data)
+            games_data = deduplicated_games_data
+            
+            # 모든 app_id 추출
+            app_ids = [data.get('app_id') for data in games_data]
+            app_ids = [aid for aid in app_ids if aid]  # None 제거
+            
+            if not app_ids:
+                logger.error("[CRW-DB] 유효한 app_id가 없습니다.")
+                return 0, []
+            
+            # 2. 기존 게임 조회
+            existing_app_ids = set(
+                row[0] for row in self._session.execute(
+                    select(Game.app_id).where(Game.app_id.in_(app_ids))
+                ).fetchall()
+            )
+            
+            # 3. 새 게임 vs 기존 게임 분류
+            new_games_data = []
+            existing_games_data = []
+            
+            for game_data in games_data:
+                app_id = game_data.get('app_id')
+                if app_id in existing_app_ids:
+                    existing_games_data.append(game_data)
+                else:
+                    new_games_data.append(game_data)
+            
+            logger.info(f"[CRW-DB] 새 게임: {len(new_games_data)}개, 기존 게임: {len(existing_games_data)}개")
+            
+            success_count = 0
+            failed_games = []
+            
+            # 4. 새 게임들 bulk insert (기본 정보만)
+            if new_games_data:
+                new_success, new_fail = self._bulk_insert_new_crawling_games(new_games_data)
+                success_count += new_success
+                failed_games.extend([{'app_id': app_id, 'error': 'db_insert_failed', 'message': 'Steam 크롤링 게임 데이터 삽입/업데이트 실패'} for app_id in new_fail])
+                logger.debug(f"[CRW-DB] 새 게임 bulk insert: 성공 {new_success}개, 실패 {len(new_fail)}개")
+            
+            # 5. 기존 게임들 개별 업데이트
+            if existing_games_data:
+                existing_success, existing_fail = self._update_existing_crawling_games(existing_games_data)
+                success_count += existing_success
+                failed_games.extend([{'app_id': app_id, 'error': 'db_exception', 'message': f'예외 발생: {str(e)}'} for app_id in existing_fail])
+                logger.info(f"[CRW-DB] 기존 게임 업데이트: 성공 {existing_success}개, 실패 {len(existing_fail)}개")
+            
+            return success_count, failed_games
+            
+        except Exception as e:
+            logger.error(f"[CRW-DB] 크롤링 하이브리드 배치 처리 중 오류: {e}")
+            return 0, []
+    
+    def _bulk_insert_new_crawling_games(self, new_games_data: List[Dict[str, Any]]) -> tuple[int, List[int]]:
+        """새 크롤링 게임들을 bulk insert로 처리"""
+        try:
+            # 게임 기본 정보, 태그, 리뷰, 가격 데이터 준비
+            game_objects = []
+            tag_objects = []
+            review_objects = []
+            pricing_objects = []
+            
+            for crawling_data in new_games_data:
+                try:
+                    app_id = crawling_data.get('app_id')
+                    if not app_id:
+                        continue
+                    
+                    # 크롤링 타임스탬프
+                    crawled_at_str = crawling_data.get('crawled_at', '')
+                    try:
+                        crawled_at = datetime.fromisoformat(crawled_at_str.replace('Z', '+00:00')) if crawled_at_str else datetime.now()
+                    except:
+                        crawled_at = datetime.now()
+                    
+                    # 게임 기본 정보
+                    title = crawling_data.get('title', '')[:255]
+                    game_objects.append({
+                        'app_id': app_id,
+                        'title': title,
+                        'description': "크롤링으로 수집된 게임 (API 데이터 없음)",
+                        'updated_at': crawled_at
+                    })
+                    
+                    # 사용자 태그
+                    for i, tag_name in enumerate(crawling_data.get('user_tags', [])):
+                        if tag_name and len(tag_name.strip()) > 0:
+                            tag_objects.append({
+                                'app_id': app_id,
+                                'tag_name': tag_name.strip()[:100],
+                                'tag_order': i + 1
+                            })
+                    
+                    # 리뷰 정보
+                    review_info = crawling_data.get('review_info', {})
+                    if review_info:
+                        recent_reviews = review_info.get('recent_reviews', '')[:50] if review_info.get('recent_reviews') else None
+                        all_reviews = review_info.get('all_reviews', '')[:50] if review_info.get('all_reviews') else None
+                        
+                        def parse_review_count_to_string(count_str):
+                            if not count_str:
+                                return None
+                            try:
+                                return str(int(str(count_str).replace(',', '')))
+                            except:
+                                return None
+                        
+                        recent_review_count = parse_review_count_to_string(review_info.get('recent_review_count'))
+                        total_review_count = parse_review_count_to_string(review_info.get('total_review_count'))
+                        
+                        review_objects.append({
+                            'app_id': app_id,
+                            'recent_reviews': recent_reviews,
+                            'all_reviews': all_reviews,
+                            'recent_review_count': recent_review_count,
+                            'total_review_count': total_review_count,
+                            'recent_positive_percent': review_info.get('recent_positive_percent'),
+                            'total_positive_percent': review_info.get('total_positive_percent'),
+                            'updated_at': crawled_at
+                        })
+                    
+                    # 가격 정보
+                    localized_price = crawling_data.get('localized_price', {})
+                    if localized_price:
+                        current_price = localized_price.get('current_price', '')[:50] if localized_price.get('current_price') else None
+                        original_price = localized_price.get('original_price', '')[:50] if localized_price.get('original_price') else None
+                        
+                        pricing_objects.append({
+                            'app_id': app_id,
+                            'current_price': current_price,
+                            'original_price': original_price,
+                            'discount_percent': localized_price.get('discount_percent'),
+                            'is_free': localized_price.get('is_free', False),
+                            'updated_at': crawled_at
+                        })
+                
+                except Exception as e:
+                    logger.error(f"[CRW-DB] 크롤링 데이터 변환 실패 {app_id}: {e}")
+                    continue
+            
+            # Bulk insert 실행
+            if game_objects:
+                self._session.bulk_insert_mappings(Game, game_objects)
+                logger.debug(f"[CRW-DB] 게임 기본 정보 bulk insert: {len(game_objects)}개")
+            
+            if tag_objects:
+                self._session.bulk_insert_mappings(GameTag, tag_objects)
+                logger.debug(f"[CRW-DB] 태그 정보 bulk insert: {len(tag_objects)}개")
+            
+            if review_objects:
+                self._session.bulk_insert_mappings(GameReview, review_objects)
+                logger.debug(f"[CRW-DB] 리뷰 정보 bulk insert: {len(review_objects)}개")
+            
+            if pricing_objects:
+                self._session.bulk_insert_mappings(GamePricing, pricing_objects)
+                logger.debug(f"[CRW-DB] 가격 정보 bulk insert: {len(pricing_objects)}개")
+            
+            return len(game_objects), []
+            
+        except Exception as e:
+            logger.error(f"[CRW-DB] 크롤링 Bulk insert 실패: {e}")
+            return 0, []
+    
+    def _update_existing_crawling_games(self, existing_games_data: List[Dict[str, Any]]) -> tuple[int, List[int]]:
+        """기존 크롤링 게임들을 개별 업데이트로 처리"""
+        success_count = 0
+        failed_games = []
+        
+        for crawling_data in existing_games_data:
+            try:
+                if self.insert_steam_crawling_game(crawling_data):
+                    success_count += 1
+                else:
+                    failed_games.append({'app_id': crawling_data.get('app_id'), 'error': 'db_insert_failed', 'message': 'Steam 크롤링 게임 데이터 삽입/업데이트 실패'})
+            except Exception as e:
+                app_id = crawling_data.get('app_id')
+                logger.error(f"[CRW-DB] 기존 크롤링 게임 업데이트 실패: {e}")
+                failed_games.append({'app_id': app_id, 'error': 'db_exception', 'message': f'예외 발생: {str(e)}'})
+        
+        return success_count, failed_games
+
 
 # 편의 함수
 def insert_steam_api_game_single(steam_data: Dict[str, Any]) -> bool:
@@ -654,24 +1032,11 @@ def insert_steam_api_game_single(steam_data: Dict[str, Any]) -> bool:
         return inserter.insert_steam_api_game(steam_data)
 
 
-def insert_steam_api_games_batch(games_data: List[Dict[str, Any]]) -> tuple[int, int]:
-    """여러 Steam API 게임 데이터를 배치로 데이터베이스에 삽입 (편의 함수)"""
-    success_count = 0
-    fail_count = 0
-    
+def insert_steam_api_games_batch(games_data: List[Dict[str, Any]]) -> tuple[int, List[Dict[str, Any]]]:
+    """여러 Steam API 게임 데이터를 하이브리드 배치로 데이터베이스에 삽입 (편의 함수)"""
     with GameInserter() as inserter:
-        for steam_data in games_data:
-            try:
-                if inserter.insert_steam_api_game(steam_data):
-                    success_count += 1
-                else:
-                    fail_count += 1
-            except Exception as e:
-                logger.error(f"[API-DB] 게임 처리 중 예외 발생: {e}")
-                fail_count += 1
-    
-    logger.info(f"[API-DB] 배치 처리 완료: 성공 {success_count}개, 실패 {fail_count}개")
-    return success_count, fail_count
+        success_count, failed_games = inserter.insert_steam_api_games_hybrid_batch(games_data)
+        return success_count, failed_games
 
 
 def insert_steam_crawling_game_single(crawling_data: Dict[str, Any]) -> bool:
@@ -680,21 +1045,9 @@ def insert_steam_crawling_game_single(crawling_data: Dict[str, Any]) -> bool:
         return inserter.insert_steam_crawling_game(crawling_data)
 
 
-def insert_steam_crawling_games_batch(games_data: List[Dict[str, Any]]) -> tuple[int, int]:
-    """여러 Steam 크롤링 게임 데이터를 배치로 데이터베이스에 삽입 (편의 함수)"""
-    success_count = 0
-    fail_count = 0
-    
+def insert_steam_crawling_games_batch(games_data: List[Dict[str, Any]]) -> tuple[int, List[Dict[str, Any]]]:
+    """여러 Steam 크롤링 게임 데이터를 하이브리드 배치로 데이터베이스에 삽입 (편의 함수)"""
     with GameInserter() as inserter:
-        for crawling_data in games_data:
-            try:
-                if inserter.insert_steam_crawling_game(crawling_data):
-                    success_count += 1
-                else:
-                    fail_count += 1
-            except Exception as e:
-                logger.error(f"[CRW-DB] 크롤링 게임 처리 중 예외 발생: {e}")
-                fail_count += 1
-    
-    logger.info(f"[CRW-DB] 배치 처리 완료: 성공 {success_count}개, 실패 {fail_count}개")
-    return success_count, fail_count 
+        success_count, failed_games = inserter.insert_steam_crawling_games_hybrid_batch(games_data)
+        return success_count, failed_games
+
