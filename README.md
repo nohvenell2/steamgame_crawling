@@ -74,24 +74,30 @@ API에서 제공하지 않는 핵심 정보만 크롤링
 ### 6. run_save_all_games.py
 대량 데이터 수집 및 DB 저장 메인 스크립트
 - **전체 Steam 게임 자동 수집**: 모든 Steam 게임을 자동으로 순회하며 데이터 수집
-- **API + 크롤링 하이브리드**: Steam API와 웹 크롤링을 조합한 포괄적 정보 수집
+- **크롤링 + API 하이브리드**: 웹 크롤링을 먼저 수행하고 API로 추가 정보 수집하는 효율적 방식
+- **배치/단일 처리 선택**: 성능 최적화된 배치 처리 또는 안정성 우선 단일 처리 선택 가능
 - **배치 처리 최적화**: 고성능 bulk insert로 DB 저장 성능 최적화
-- **지능형 필터링**: 게임 타입 및 리뷰 수 기반 필터링으로 품질 관리
+- **지능형 필터링**: 게임 타입 및 리뷰 수 기반 필터링으로 품질 관리 (기본 100개 이상)
 - **실패 추적 및 복구**: 실패한 게임들의 상세 분류 및 재시도 가능
-- **실시간 모니터링**: 진행률, 성공률 등 실시간 처리 상황 확인
+- **실시간 모니터링**: 진행률, 성공률 등 실시간 처리 상황 확인 (1000개마다)
 - **백그라운드 실행**: nohup을 통한 장시간 무인 실행 지원
 - **로그 관리**: 상세한 처리 로그 및 실패 게임 JSON 저장
 
-**주요 처리 흐름**:
+**주요 처리 함수**:
+- `main_with_batch()`: 배치 처리 방식 (고성능, 권장)
+- `main_without_batch()`: 단일 게임 처리 방식 (안정성 우선)
+- `run_all_games()`: 전체 처리 실행 (배치/단일 선택 가능)
+
+**개선된 처리 흐름** (크롤링 우선):
 1. Steam 게임 ID 목록 수집
-2. 각 게임별 API 데이터 수집 및 검증
-3. 웹 크롤링으로 추가 정보 수집
-4. 배치 단위로 DB 저장
+2. 각 게임별 웹 크롤링으로 기본 정보 및 리뷰 수 확인
+3. 리뷰 수 조건을 만족하는 게임만 API 데이터 수집
+4. 모든 검증을 통과한 게임만 DB 저장
 5. 실패 게임 추적 및 리포팅
 
 **사용 예시**:
 ```bash
-# 백그라운드에서 전체 수집 실행
+# 배치 처리로 백그라운드 실행 (기본, 권장)
 nohup poetry run python -u src/run_save_all_games.py > logs/run_save_all_games_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 
 # 진행 상황 실시간 모니터링
@@ -99,6 +105,15 @@ tail -f logs/run_save_all_games_*.log
 
 # 프로세스 종료
 pkill -f "run_save_all_games.py"
+```
+
+**처리 방식 선택**:
+```python
+# 배치 처리 (고성능, 권장)
+result = run_all_games(minimum_reviews=100, use_batch=True)
+
+# 단일 게임 처리 (안정성 우선)
+result = run_all_games(minimum_reviews=100, use_batch=False)
 ```
 
 ### 7. database/
@@ -194,7 +209,7 @@ print(f"태그: {tags}")
 모든 Steam 게임 데이터를 자동으로 수집하고 데이터베이스에 저장:
 
 ```bash
-# 백그라운드에서 전체 수집 실행 (권장)
+# 배치 처리로 백그라운드 실행 (권장)
 nohup poetry run python -u src/run_save_all_games.py > logs/run_save_all_games_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 
 # 진행 상황 실시간 모니터링
@@ -207,17 +222,46 @@ ps aux | grep "run_save_all_games" | grep -v grep
 pkill -f "run_save_all_games.py"
 ```
 
+**프로그래밍 방식 실행**:
+```python
+from src.run_save_all_games import run_all_games
+
+# 배치 처리 (고성능, 권장)
+result = run_all_games(
+    max_retries=10,
+    delay=0.5,
+    batch_size=100,
+    minimum_reviews=100,
+    use_batch=True
+)
+
+# 단일 게임 처리 (안정성 우선)
+result = run_all_games(
+    max_retries=10,
+    delay=0.5,
+    minimum_reviews=100,
+    use_batch=False
+)
+```
+
 **설정 가능한 매개변수** (파일 내부 수정):
 ```python
 # 기본 설정 (파일 마지막 부분)
-result = main_with_batch(
+result = run_all_games(
     max_retries=10,      # 최대 재시도 횟수
     delay=0.5,           # 각 게임 처리 후 지연 시간 (초)
-    batch_size=100,      # 배치 크기
-    limit=None,          # 처리할 게임 수 제한 (None=무제한)
-    minimum_reviews=100  # 최소 리뷰 수 필터
+    batch_size=100,      # 배치 크기 (use_batch=True일 때만 사용)
+    minimum_reviews=100, # 최소 리뷰 수 필터 (기본값 변경됨)
+    use_batch=True       # 배치 처리 사용 여부 (기본: True)
 )
 ```
+
+**주요 변경사항**:
+- `minimum_reviews` 기본값: 0 → 100개로 변경
+- 리뷰 수 조건: `>` → `>=`로 변경 (100개 이상)
+- 진행률 표시: 100개마다 → 1000개마다로 변경
+- 처리 순서: 크롤링 → API 순서로 효율성 개선
+- 처리 방식: 배치/단일 선택 가능
 
 **로그 파일 위치**:
 - 실행 로그: `logs/run_save_all_games_YYYYMMDD_HHMMSS.log`

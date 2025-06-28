@@ -100,65 +100,163 @@ def parse_review_count_to_int(count_value):
     except (ValueError, AttributeError):
         return 0
 
-def data_to_db_by_app_id(app_id: int, max_retries: int = 7, minimum_reviews: Optional[int] = 0) -> bool:
-    # 크롤링 데이터 수집 (먼저 실행)
-    data_crawling = get_steam_game_info_crawler_minimal_sync(app_id, max_retries).get('data')
-    if not data_crawling:
-        logger.info(f"[MAIN]({app_id}) 크롤링 데이터가 없습니다.")
-        return False
+def main_without_batch(app_ids: List[int], max_retries: int = 7, delay: float = 0.5, minimum_reviews: Optional[int] = 100):
+    """
+    단일 게임 처리 방식으로 Steam 게임 데이터를 수집하고 저장합니다.
+    - 각 게임을 개별적으로 처리하고 즉시 DB에 저장
+    - main_with_batch와 동일한 실패 수집 로직 사용
     
-    # 리뷰 수 필터링
-    raw_review_count = data_crawling.get('review_info', {}).get('total_review_count', 0)
-    review_count = 0 if raw_review_count == 0 else parse_review_count_to_int(raw_review_count)
+    Args:
+        app_ids (List[int]): 처리할 게임 ID 목록
+        max_retries (int): 최대 재시도 횟수
+        delay (float): 각 게임 처리 후 지연 시간 (초)
+        minimum_reviews (Optional[int]): 최소 리뷰 수 필터
+    """
+    global global_failed_games, global_processed_count
     
-    if minimum_reviews is not None and review_count <= minimum_reviews:
-        logger.debug(f"[MAIN]({app_id}) 리뷰 수 부족: {review_count}개")
-        global_failed_games[app_id] = {
-            'type': 'crawling_failed',
-            'error': 'review_count_too_low'
-        }
-        return False
+    # 통계 변수
+    total_games = len(app_ids)
+    processed_count = 0
+    api_success_count = 0
+    crawling_success_count = 0
     
-    logger.debug(f"[MAIN]({app_id}) 리뷰 수 충족: {review_count}개")
+    logger.info(f"[MAIN] 단일 게임 처리 시작: {total_games}개 게임")
     
-    # 크롤링 데이터가 있고 리뷰 수 조건을 만족할 때만 API 데이터 수집
-    data_api = get_steam_game_info_api_sync(app_id, max_retries).get('data')
-    if not data_api:
-        logger.info(f"[MAIN]({app_id}) API 데이터가 없습니다.")
-        return False
+    def save_failed_games_info():
+        """실패한 게임 정보를 파일에 저장하는 함수"""
+        save_failed_games_to_file(global_failed_games)
     
-    # id 불일치 체크
-    if data_api.get('steam_appid') != app_id:
-        logger.info(f"[MAIN]({app_id}) id 불일치: API - {data_api.get('app_id')}")
-        global_failed_games[app_id] = {
-            'type': 'api_failed',
-            'error': 'id_mismatch'
-        }
-        return False
+    try:
+        for i, app_id in enumerate(app_ids):
+            processed_count += 1
+            global_processed_count = processed_count  # 전역 변수 업데이트
+            
+            # 1. 크롤링 데이터 수집 (먼저 실행)
+            crawling_result = get_steam_game_info_crawler_minimal_sync(app_id, max_retries)
+            
+            if crawling_result.get('success') and crawling_result.get('data'):
+                # 리뷰 수 추출 및 필터링
+                raw_review_count = crawling_result['data'].get('review_info', {}).get('total_review_count', 0)
+                review_count = 0 if raw_review_count == 0 else parse_review_count_to_int(raw_review_count)
+                
+                if minimum_reviews is None or review_count >= minimum_reviews:
+                    logger.debug(f"[MAIN]({app_id}) 리뷰 수 충족: {review_count}개")
+                    
+                    # 2. 크롤링 데이터가 있을 때만 API 데이터 수집
+                    api_result = get_steam_game_info_api_sync(app_id, max_retries)
+                    
+                    if api_result.get('success') and api_result.get('data'):
+                        api_data = api_result['data']
+                        
+                        # id 불일치 체크
+                        if api_data.get('steam_appid') != app_id:
+                            logger.info(f"[MAIN]({app_id}) id 불일치: API - {api_data.get('app_id')}")
+                            global_failed_games[app_id] = {
+                                'type': 'api_failed',
+                                'error': 'id_mismatch'
+                            }
+                            continue
+                        
+                        # 게임 타입 체크
+                        if api_data.get('type') == 'game':
+                            # 3. 모든 검증을 통과하면 즉시 DB에 저장
+                            try:
+                                insert_steam_crawling_game_single(crawling_result['data'])
+                                crawling_success_count += 1
+                                insert_steam_api_game_single(api_data)
+                                api_success_count += 1
+                                logger.info(f"[MAIN]({app_id}) 데이터 수집 및 저장 완료")
+                            except Exception as e:
+                                logger.error(f"[MAIN]({app_id}) DB 저장 실패: {e}")
+                                global_failed_games[app_id] = {
+                                    'type': 'db_failed',
+                                    'error': 'db_insert_failed'
+                                }
+                        else:
+                            # 게임 타입이 아님
+                            logger.warning(f"[MAIN]({app_id}) 게임 타입 아님: 타입 - {api_data.get('type', 'Unknown')}")
+                            global_failed_games[app_id] = {
+                                'type': 'api_failed',
+                                'error': 'invalid_game_type'
+                            }
+                            continue
+                    # api 데이터 없음 처리
+                    elif api_result.get('error') == 'no_data':
+                        logger.warning(f"[MAIN]({app_id}) API 데이터 없음")
+                        global_failed_games[app_id] = {
+                            'type': 'api_failed',
+                            'error': 'no_data_from_api'
+                        }
+                    # 기타 API 실패
+                    else:
+                        logger.warning(f"[MAIN]({app_id}) API 실패: {api_result.get('message', 'Unknown error')}")
+                        global_failed_games[app_id] = {
+                            'type': 'api_failed',
+                            'error': 'unknown_api_error'
+                        }
+                else:
+                    logger.debug(f"[MAIN]({app_id}) 리뷰 수 부족: {review_count}개")
+                    global_failed_games[app_id] = {
+                        'type': 'crawling_failed',
+                        'error': 'review_count_too_low'
+                    }
+            else:       
+                # 방문 불가능한 페이지의 경우
+                if crawling_result.get('error') == 'invalid_game_page':
+                    logger.warning(f"[MAIN]({app_id}) 크롤링 실패 : {crawling_result.get('message', 'Unknown error')}")
+                    global_failed_games[app_id] = {
+                        'type': 'crawling_failed',
+                        'error': 'invalid_game_page'
+                    }
+                # 이외의 크롤링 오류
+                else:
+                    logger.warning(f"[MAIN]({app_id}) 크롤링 실패 : {crawling_result.get('message', 'Unknown error')}")
+                    global_failed_games[app_id] = {
+                        'type': 'crawling_failed',
+                        'error': 'unknown_crawling_error'
+                    }
+            
+            # 4. 진행률 표시 (1000개마다)
+            if processed_count % 1000 == 0 or processed_count == total_games:
+                progress_percent = (processed_count / total_games) * 100
+                logger.info(f"[MAIN] 진행률: {processed_count}/{total_games} ({progress_percent:.1f}%)")
+            
+            # 5. 지연
+            time.sleep(delay)
+        
+        # 6. 최종 결과 리포트
+        logger.info(f"[MAIN] === 최종 결과 ===")
+        logger.info(f"[MAIN] 전체 처리: {processed_count}개")
+        logger.info(f"[MAIN] API 성공: {api_success_count}개")
+        logger.info(f"[MAIN] 크롤링 성공: {crawling_success_count}개")
+        logger.info(f"[MAIN] 실패한 게임: {len(global_failed_games)}개")
     
-    elif data_api.get('type') != 'game':
-        logger.warning(f"[MAIN]({app_id}) 게임 타입 아님: 타입 - {data_api.get('type', 'Unknown')}")
-        global_failed_games[app_id] = {
-            'type': 'api_failed',
-            'error': 'invalid_game_type'
-        }
-        return False
+    except Exception as e:
+        logger.error(f"[MAIN] 메인 처리 중 예외 발생: {e}")
+        logger.error(f"[MAIN] 현재까지 처리된 게임: {processed_count}개")
+        raise  # 예외를 다시 발생시켜서 finally에서 정리 작업 수행
     
+    finally:
+        # 프로그램 종료시 반드시 실행되는 부분
+        logger.info(f"[MAIN] 프로그램 종료 - 정리 작업 수행 중...")
+        
+        # 실패한 게임 정보 저장 (반드시 실행)
+        save_failed_games_info()
+        
+        logger.info(f"[MAIN] 정리 작업 완료")
+    
+    return {
+        'total_processed': processed_count,
+        'api_success_count': api_success_count,
+        'crawling_success_count': crawling_success_count,
+        'failed_games': global_failed_games
+    }
 
-    # api, 크롤링 데이터 유효 검사를 통과하면 DB 에 저장
-    else: 
-        insert_steam_crawling_game_single(data_crawling)
-        insert_steam_api_game_single(data_api)
-    
-    return True
+def main(max_retries: int = 7, delay: float = 0.5, limit: Optional[int] = None, minimum_reviews: Optional[int] = 100):
+    app_ids = list(get_all_steam_games(limit))
+    return main_without_batch(app_ids, max_retries, delay, minimum_reviews)
 
-def main(max_retries: int = 7, delay: float = 0.5, limit: Optional[int] = None, minimum_reviews: Optional[int] = 0):
-    app_ids = get_all_steam_games(limit)
-    for app_id in app_ids:
-        data_to_db_by_app_id(app_id, max_retries, minimum_reviews)
-        time.sleep(delay)
-
-def main_with_batch(app_ids: List[int], max_retries: int = 7, delay: float = 0.5, batch_size: int = 100, minimum_reviews: Optional[int] = 0):
+def main_with_batch(app_ids: List[int], max_retries: int = 7, delay: float = 0.5, batch_size: int = 100, minimum_reviews: Optional[int] = 100):
     """
     배치 처리 방식으로 Steam 게임 데이터를 수집하고 저장합니다.
     - 새 게임: bulk insert (고성능)
@@ -202,7 +300,7 @@ def main_with_batch(app_ids: List[int], max_retries: int = 7, delay: float = 0.5
                 raw_review_count = crawling_result['data'].get('review_info', {}).get('total_review_count', 0)
                 review_count = 0 if raw_review_count == 0 else parse_review_count_to_int(raw_review_count)
                 
-                if minimum_reviews is None or review_count > minimum_reviews:
+                if minimum_reviews is None or review_count >= minimum_reviews:
                     logger.debug(f"[MAIN]({app_id}) 리뷰 수 충족: {review_count}개")
                     
                     # 2. 크롤링 데이터가 있을 때만 API 데이터 수집
@@ -378,33 +476,46 @@ def signal_handler(signum, frame):
     logger.info(f"[SIGNAL] 정리 작업 완료. 프로그램을 종료합니다.")
     sys.exit(0)
 
-def run_all_games(max_retries: int = 10, delay: float = 0.5, batch_size: int = 100, minimum_reviews: int = 0):
+def run_all_games(max_retries: int = 10, delay: float = 0.5, batch_size: int = 100, minimum_reviews: int = 100, use_batch: bool = True):
     """
-    방안 1: 전체 Steam 게임 ID로 크롤링 실행
+    전체 Steam 게임 ID로 크롤링 실행
     
     Args:
         max_retries (int): 최대 재시도 횟수
         delay (float): 각 게임 처리 후 지연 시간 (초)
-        batch_size (int): 배치 크기
+        batch_size (int): 배치 크기 (use_batch=True일 때만 사용)
         minimum_reviews (int): 최소 리뷰 수 필터
+        use_batch (bool): 배치 처리 사용 여부
         
     Returns:
         dict: 처리 결과
     """
-    logger.info("[SETUP] 방안 1: 전체 Steam 게임 ID로 크롤링 실행")
+    if use_batch:
+        logger.info("[SETUP] 전체 Steam 게임 ID로 배치 크롤링 실행")
+    else:
+        logger.info("[SETUP] 전체 Steam 게임 ID로 단일 크롤링 실행")
     
     # Steam API에서 전체 게임 ID 가져오기
     all_game_ids = list(get_all_steam_games())
     logger.info(f"[SETUP] 전체 게임 ID 수집 완료: {len(all_game_ids):,}개")
     
-    # 전체 게임으로 배치 처리 실행
-    result = main_with_batch(
-        app_ids=all_game_ids,
-        max_retries=max_retries, 
-        delay=delay, 
-        batch_size=batch_size, 
-        minimum_reviews=minimum_reviews
-    )
+    if use_batch:
+        # 배치 처리 실행
+        result = main_with_batch(
+            app_ids=all_game_ids,
+            max_retries=max_retries, 
+            delay=delay, 
+            batch_size=batch_size, 
+            minimum_reviews=minimum_reviews
+        )
+    else:
+        # 단일 게임 처리 실행
+        result = main_without_batch(
+            app_ids=all_game_ids,
+            max_retries=max_retries, 
+            delay=delay, 
+            minimum_reviews=minimum_reviews
+        )
     
     return result
 
