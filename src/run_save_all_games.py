@@ -71,6 +71,7 @@ import logging
 import json
 import signal
 import sys
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,6 @@ def parse_review_count_to_int(count_value):
             # 콤마와 공백 제거
             clean_count = count_value.replace(',', '').replace(' ', '')
             # 숫자만 추출 (예: "123k" -> "123" 처리 가능)
-            import re
             numbers = re.findall(r'\d+', clean_count)
             if numbers:
                 return int(numbers[0])
@@ -137,7 +137,7 @@ def main_without_batch(app_ids: List[int], max_retries: int = 7, delay: float = 
             if crawling_result.get('success') and crawling_result.get('data'):
                 # 리뷰 수 추출 및 필터링
                 raw_review_count = crawling_result['data'].get('review_info', {}).get('total_review_count', 0)
-                review_count = 0 if raw_review_count == 0 else parse_review_count_to_int(raw_review_count)
+                review_count = parse_review_count_to_int(raw_review_count)
                 
                 if minimum_reviews is None or review_count >= minimum_reviews:
                     logger.debug(f"[MAIN]({app_id}) 리뷰 수 충족: {review_count}개")
@@ -298,7 +298,7 @@ def main_with_batch(app_ids: List[int], max_retries: int = 7, delay: float = 0.5
             if crawling_result.get('success') and crawling_result.get('data'):
                 # 리뷰 수 추출 및 필터링
                 raw_review_count = crawling_result['data'].get('review_info', {}).get('total_review_count', 0)
-                review_count = 0 if raw_review_count == 0 else parse_review_count_to_int(raw_review_count)
+                review_count = parse_review_count_to_int(raw_review_count)
                 
                 if minimum_reviews is None or review_count >= minimum_reviews:
                     logger.debug(f"[MAIN]({app_id}) 리뷰 수 충족: {review_count}개")

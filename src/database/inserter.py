@@ -647,18 +647,18 @@ class GameInserter:
         recent_reviews = review_info.get('recent_reviews', '')[:50] if review_info.get('recent_reviews') else None
         all_reviews = review_info.get('all_reviews', '')[:50] if review_info.get('all_reviews') else None
         
-        # 리뷰 개수 (DB에 문자열로 저장되므로 문자열로 처리)
-        def parse_review_count_to_string(count_str):
+        # 리뷰 개수 (DB에 INT로 저장되므로 정수로 처리)
+        def parse_review_count_to_int(count_str):
             if not count_str:
                 return None
             try:
-                # "6,337" -> "6337" (문자열로 반환)
-                return str(int(str(count_str).replace(',', '')))
+                # "6,337" -> 6337 (정수로 반환)
+                return int(str(count_str).replace(',', ''))
             except:
                 return None
         
-        recent_review_count = parse_review_count_to_string(review_info.get('recent_review_count'))
-        total_review_count = parse_review_count_to_string(review_info.get('total_review_count'))
+        recent_review_count = parse_review_count_to_int(review_info.get('recent_review_count'))
+        total_review_count = parse_review_count_to_int(review_info.get('total_review_count'))
         recent_positive_percent = review_info.get('recent_positive_percent')
         total_positive_percent = review_info.get('total_positive_percent')
         
@@ -1038,16 +1038,16 @@ class GameInserter:
                         recent_reviews = review_info.get('recent_reviews', '')[:50] if review_info.get('recent_reviews') else None
                         all_reviews = review_info.get('all_reviews', '')[:50] if review_info.get('all_reviews') else None
                         
-                        def parse_review_count_to_string(count_str):
+                        def parse_review_count_to_int(count_str):
                             if not count_str:
                                 return None
                             try:
-                                return str(int(str(count_str).replace(',', '')))
+                                return int(str(count_str).replace(',', ''))
                             except:
                                 return None
                         
-                        recent_review_count = parse_review_count_to_string(review_info.get('recent_review_count'))
-                        total_review_count = parse_review_count_to_string(review_info.get('total_review_count'))
+                        recent_review_count = parse_review_count_to_int(review_info.get('recent_review_count'))
+                        total_review_count = parse_review_count_to_int(review_info.get('total_review_count'))
                         
                         review_objects.append({
                             'app_id': app_id,
