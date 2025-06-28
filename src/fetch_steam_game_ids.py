@@ -68,11 +68,6 @@ def get_all_steam_games(limit: Optional[int] = None) -> Set[int]:
 
 
 if __name__ == "__main__":
-<<<<<<< HEAD
-    steam_game_list = SteamGameList()
-    result = steam_game_list.get_all_steam_games(limit=10)
-=======
     setup_logger("INFO")
     result = get_all_steam_games(limit=10)
->>>>>>> feature/integrate-latest-with-db
     print(result)
