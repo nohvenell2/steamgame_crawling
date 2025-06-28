@@ -267,7 +267,7 @@ class MinimalGameCrawler:
                             # 게임 제목으로 유효성 확인
                             title_element = soup.select_one('.apphub_AppName, h1.pageheader, .game_title h1')
                             if not title_element:
-                                logger.error(f"[CRW] 게임 ID {app_id}: 유효하지 않은 게임 페이지")
+                                logger.debug(f"[CRW] 게임 ID {app_id}: 유효하지 않은 게임 페이지")
                                 return {
                                     'success': False,
                                     'error': 'invalid_game_page',
@@ -284,7 +284,7 @@ class MinimalGameCrawler:
                                 'review_info': self.extract_review_info(soup),
                                 'localized_price': self.extract_localized_price(soup)
                             }
-                            logger.info(f"[CRW] 정보 크롤링 완료: {minimal_info['title']} ({minimal_info['app_id']})")
+                            logger.debug(f"[CRW] 정보 크롤링 완료: {minimal_info['title']} ({minimal_info['app_id']})")
                             return {
                                 'success': True,
                                 'data': minimal_info
@@ -460,4 +460,4 @@ if __name__ == "__main__":
     setup_logger("INFO")
     
     # 테스트 실행
-    print(get_steam_game_info_crawler_minimal_sync(3489700))
+    print(get_steam_game_info_crawler_minimal_sync(2621460))

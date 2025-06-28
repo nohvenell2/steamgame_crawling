@@ -67,11 +67,19 @@ class GameInserter:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.session:
-            if exc_type is None:
-                self.session.commit()
-            else:
-                self.session.rollback()
-            self.session.close()
+            try:
+                if exc_type is None:
+                    self.session.commit()
+                else:
+                    self.session.rollback()
+            except Exception as e:
+                logger.error(f"세션 처리 중 에러 발생: {e}")
+                try:
+                    self.session.rollback()
+                except:
+                    pass
+            finally:
+                self.session.close()
     
     @property
     def _session(self) -> Session:
@@ -185,7 +193,37 @@ class GameInserter:
         while len(result_lines) > 0 and result_lines[-1] == '':
             result_lines.pop()
         
-        return '\n'.join(result_lines)
+        result = '\n'.join(result_lines)
+        
+        # 6. MySQL TEXT 타입 최대 길이(65,535자) 제한
+        # UTF-8 인코딩을 고려하여 약간의 여유를 두고 65,000자로 제한
+        MAX_TEXT_LENGTH = 65000
+        
+        if len(result) > MAX_TEXT_LENGTH:
+            logger.warning(f"detailed_description이 최대 길이({MAX_TEXT_LENGTH}자)를 초과하여 자릅니다. 원본 길이: {len(result)}자")
+            # 문장 단위로 자르기 위해 마지막 완전한 문장을 찾음
+            truncated = result[:MAX_TEXT_LENGTH]
+            
+            # 마지막 완전한 문장의 끝을 찾기
+            last_period = truncated.rfind('.')
+            last_exclamation = truncated.rfind('!')
+            last_question = truncated.rfind('?')
+            last_newline = truncated.rfind('\n')
+            
+            # 가장 마지막에 있는 문장 끝 위치 찾기
+            sentence_end = max(last_period, last_exclamation, last_question, last_newline)
+            
+            if sentence_end > MAX_TEXT_LENGTH * 0.8:  # 80% 이상이면 문장 단위로 자르기
+                result = truncated[:sentence_end + 1]
+            else:
+                # 문장 끝을 찾지 못하면 단어 단위로 자르기
+                last_space = truncated.rfind(' ')
+                if last_space > MAX_TEXT_LENGTH * 0.8:
+                    result = truncated[:last_space] + "..."
+                else:
+                    result = truncated + "..."
+        
+        return result
 
     def convert_system_requirements(self, html_content: str) -> str:
         """시스템 요구사항 HTML을 읽기 쉬운 텍스트로 변환합니다"""
@@ -258,6 +296,28 @@ class GameInserter:
                     result.append(formatted_rec)
         
         final_result = ''.join(result).strip()
+        
+        # MySQL TEXT 타입 최대 길이(65,535자) 제한
+        MAX_TEXT_LENGTH = 65000
+        
+        if len(final_result) > MAX_TEXT_LENGTH:
+            logger.warning(f"system_requirements가 최대 길이({MAX_TEXT_LENGTH}자)를 초과하여 자릅니다. 원본 길이: {len(final_result)}자")
+            # 시스템 요구사항은 구조화된 텍스트이므로 줄 단위로 자르기
+            lines = final_result.split('\n')
+            truncated_lines = []
+            current_length = 0
+            
+            for line in lines:
+                if current_length + len(line) + 1 <= MAX_TEXT_LENGTH:  # +1 for newline
+                    truncated_lines.append(line)
+                    current_length += len(line) + 1
+                else:
+                    break
+            
+            final_result = '\n'.join(truncated_lines)
+            if len(final_result) < len(''.join(result)):
+                final_result += "\n... (truncated)"
+        
         return final_result
 
     def _format_requirements_text(self, content: str) -> str:
@@ -299,6 +359,42 @@ class GameInserter:
         
         return '\n'.join(formatted_items) + '\n' if formatted_items else ""
 
+    def truncate_text_for_mysql(self, text: str, field_name: str = "text") -> str:
+        """MySQL TEXT 타입의 최대 길이에 맞게 텍스트를 자릅니다"""
+        if not text:
+            return text
+        
+        # MySQL TEXT 타입 최대 길이(65,535자) 제한
+        # UTF-8 인코딩을 고려하여 약간의 여유를 두고 65,000자로 제한
+        MAX_TEXT_LENGTH = 65000
+        
+        if len(text) <= MAX_TEXT_LENGTH:
+            return text
+        
+        logger.warning(f"{field_name}이 최대 길이({MAX_TEXT_LENGTH}자)를 초과하여 자릅니다. 원본 길이: {len(text)}자")
+        
+        # 문장 단위로 자르기 위해 마지막 완전한 문장을 찾음
+        truncated = text[:MAX_TEXT_LENGTH]
+        
+        # 마지막 완전한 문장의 끝을 찾기
+        last_period = truncated.rfind('.')
+        last_exclamation = truncated.rfind('!')
+        last_question = truncated.rfind('?')
+        last_newline = truncated.rfind('\n')
+        
+        # 가장 마지막에 있는 문장 끝 위치 찾기
+        sentence_end = max(last_period, last_exclamation, last_question, last_newline)
+        
+        if sentence_end > MAX_TEXT_LENGTH * 0.8:  # 80% 이상이면 문장 단위로 자르기
+            return truncated[:sentence_end + 1]
+        else:
+            # 문장 끝을 찾지 못하면 단어 단위로 자르기
+            last_space = truncated.rfind(' ')
+            if last_space > MAX_TEXT_LENGTH * 0.8:
+                return truncated[:last_space] + "..."
+            else:
+                return truncated + "..."
+
     def insert_steam_api_game(self, steam_data: Dict[str, Any]) -> bool:
         """Steam API에서 가져온 게임 데이터를 데이터베이스에 삽입/업데이트 (변경점만)"""
         try:
@@ -317,7 +413,7 @@ class GameInserter:
             
             # 기본 정보 추출 및 변환
             title = steam_data.get('name', '')[:255]  # VARCHAR(255) 제한
-            description = steam_data.get('short_description', '')
+            description = self.truncate_text_for_mysql(steam_data.get('short_description', ''), 'description')
             
             # 상세 설명 HTML → 텍스트 변환
             raw_detailed_description = steam_data.get('detailed_description', '')
@@ -731,7 +827,7 @@ class GameInserter:
                     
                     # 기본 정보 변환
                     title = steam_data.get('name', '')[:255]
-                    description = steam_data.get('short_description', '')
+                    description = self.truncate_text_for_mysql(steam_data.get('short_description', ''), 'description')
                     
                     # 상세 설명 변환
                     raw_detailed_description = steam_data.get('detailed_description', '')

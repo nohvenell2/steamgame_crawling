@@ -80,7 +80,7 @@ async def get_steam_game_info_api(app_id: int, max_retries: int = 7) -> Dict[str
                         success = raw_data.get(str(app_id),{}).get('success',False)
                         data = raw_data.get(str(app_id),{}).get('data',{})
                         if success and data:
-                            logger.info(f"[API] 정보 요청 완료: {data.get('name', '')} ({app_id})")
+                            logger.debug(f"[API] 정보 요청 완료: {data.get('name', '')} ({app_id})")
                             return {
                                 'success': success,
                                 'data': data,
