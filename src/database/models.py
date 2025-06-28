@@ -23,12 +23,11 @@ class Game(Base):
     release_date = Column(Date)
     developer = Column(String(255))
     publisher = Column(String(255))
-    crawled_at = Column(DateTime, default=datetime.utcnow)
-    
-    # 단순화된 필드들
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     header_image_url = Column(String(500))
     system_requirements_minimum = Column(Text)
     system_requirements_recommended = Column(Text)
+    metacritic_score = Column(Integer)
     
     # 관계 설정
     tags = relationship("GameTag", back_populates="game", cascade="all, delete-orphan")
@@ -41,7 +40,7 @@ class Game(Base):
         Index('idx_title', 'title'),
         Index('idx_developer', 'developer'),
         Index('idx_release_date', 'release_date'),
-        Index('idx_crawled_at', 'crawled_at'),
+        Index('idx_updated_at', 'updated_at'),
     )
     
     def __repr__(self):
@@ -55,7 +54,7 @@ class GameTag(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     app_id = Column(Integer, ForeignKey('games.app_id', ondelete='CASCADE'), nullable=False)
     tag_name = Column(String(100), nullable=False)
-    tag_order = Column(Integer, default=1)
+    tag_order = Column(Integer)
     
     # 관계 설정
     game = relationship("Game", back_populates="tags")

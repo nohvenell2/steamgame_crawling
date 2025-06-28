@@ -54,7 +54,7 @@ def get_db_engine() -> Engine:
             pool_recycle=3600,
             echo=False
         )
-        logger.info("데이터베이스 엔진이 생성되었습니다.")
+        logger.debug("데이터베이스 엔진이 생성되었습니다.")
     
     return _engine
 
@@ -66,7 +66,7 @@ def get_session_factory() -> sessionmaker:
     if _session_factory is None:
         engine = get_db_engine()
         _session_factory = sessionmaker(bind=engine)
-        logger.info("세션 팩토리가 생성되었습니다.")
+        logger.debug("세션 팩토리가 생성되었습니다.")
     
     return _session_factory
 

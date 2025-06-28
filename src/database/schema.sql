@@ -10,13 +10,11 @@ CREATE TABLE IF NOT EXISTS games (
     app_id INT PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
     description TEXT,
-    detailed_description LONGTEXT,
+    detailed_description TEXT,
     release_date DATE,
     developer VARCHAR(255),
     publisher VARCHAR(255),
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    -- 단순화된 필드들
+    updated_at DATETIME,
     header_image_url VARCHAR(500),
     system_requirements_minimum TEXT,
     system_requirements_recommended TEXT,
@@ -26,15 +24,15 @@ CREATE TABLE IF NOT EXISTS games (
     INDEX idx_title (title),
     INDEX idx_developer (developer),
     INDEX idx_release_date (release_date),
-    INDEX idx_crawled_at (crawled_at)
+    INDEX idx_updated_at (updated_at)
 ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- 2. Game Tags (태그 - 다대다 관계)
 CREATE TABLE IF NOT EXISTS game_tags (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    app_id INT NOT NULL,
-    tag_name VARCHAR(100) NOT NULL,
     tag_order TINYINT UNSIGNED DEFAULT 1,
+    tag_order INT,
+>>>>>>> feature/integrate-latest-with-db
     
     FOREIGN KEY (app_id) REFERENCES games(app_id) ON DELETE CASCADE,
     INDEX idx_app_id (app_id),
@@ -61,8 +59,8 @@ CREATE TABLE IF NOT EXISTS game_pricing (
     current_price VARCHAR(50),
     original_price VARCHAR(50),
     discount_percent INT,
-    is_free BOOLEAN DEFAULT FALSE,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    is_free TINYINT(1),
+    updated_at DATETIME,
     
     FOREIGN KEY (app_id) REFERENCES games(app_id) ON DELETE CASCADE,
     INDEX idx_is_free (is_free),
@@ -77,9 +75,9 @@ CREATE TABLE IF NOT EXISTS game_reviews (
     all_reviews VARCHAR(50),
     recent_review_count VARCHAR(20),
     total_review_count VARCHAR(20),
-    recent_positive_percent TINYINT UNSIGNED,
-    total_positive_percent TINYINT UNSIGNED,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    recent_positive_percent INT,
+    total_positive_percent INT,
+    updated_at DATETIME,
     
     FOREIGN KEY (app_id) REFERENCES games(app_id) ON DELETE CASCADE,
     INDEX idx_recent_reviews (recent_reviews),
